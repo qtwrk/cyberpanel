@@ -9,28 +9,240 @@ from firewallUtilities import FirewallUtilities
 import time
 import string
 import random
+import socket
+from os.path import *
+from stat import *
+import stat
+from os import urandom
+from random import choice
+
+char_set = {'small': 'abcdefghijklmnopqrstuvwxyz',
+            'nums': '0123456789',
+            'big': 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+            }
+
+
+def generate_pass(length=14):
+    """Function to generate a password"""
+
+    password = []
+
+    while len(password) < length:
+        key = choice(char_set.keys())
+        a_char = urandom(1)
+        if a_char in char_set[key]:
+            if check_prev_char(password, char_set[key]):
+                continue
+            else:
+                password.append(a_char)
+    return ''.join(password)
+
+
+def check_prev_char(password, current_char_set):
+    """Function to ensure that there are no consecutive
+    UPPERCASE/lowercase/numbers/special-characters."""
+
+    index = len(password)
+    if index == 0:
+        return False
+    else:
+        prev_char = password[index - 1]
+        if prev_char in current_char_set:
+            return True
+        else:
+            return False
+
 
 # There can not be peace without first a great suffering.
 
-class preFlightsChecks:
+# distros
 
+centos = 0
+ubuntu = 1
+
+
+def get_distro():
+    distro = -1
+    distro_file = ""
+    if exists("/etc/lsb-release"):
+        distro_file = "/etc/lsb-release"
+        with open(distro_file) as f:
+            for line in f:
+                if line == "DISTRIB_ID=Ubuntu\n":
+                    distro = ubuntu
+
+    elif exists("/etc/os-release"):
+        distro_file = "/etc/os-release"
+        distro = centos
+
+    else:
+        logging.InstallLog.writeToFile("Can't find linux release file - fatal error")
+        preFlightsChecks.stdOut("Can't find linux release file - fatal error")
+        os._exit(os.EX_UNAVAILABLE)
+
+    if distro == -1:
+        logging.InstallLog.writeToFile("Can't find distro name in " + distro_file + " - fatal error")
+        preFlightsChecks.stdOut("Can't find distro name in " + distro_file + " - fatal error")
+        os._exit(os.EX_UNAVAILABLE)
+
+    return distro
+
+
+def get_Ubuntu_release():
+    release = -1
+    if exists("/etc/lsb-release"):
+        distro_file = "/etc/lsb-release"
+        with open(distro_file) as f:
+            for line in f:
+                if line[:16] == "DISTRIB_RELEASE=":
+                    release = float(line[16:])
+
+        if release == -1:
+            preFlightsChecks.stdOut("Can't find distro release name in " + distro_file + " - fatal error", 1, 1,
+                                    os.EX_UNAVAILABLE)
+
+    else:
+        logging.InstallLog.writeToFile("Can't find linux release file - fatal error")
+        preFlightsChecks.stdOut("Can't find linux release file - fatal error")
+        os._exit(os.EX_UNAVAILABLE)
+
+    return release
+
+
+class preFlightsChecks:
     cyberPanelMirror = "mirror.cyberpanel.net/pip"
 
-    def __init__(self,rootPath,ip,path,cwd,cyberPanelPath):
+    def __init__(self, rootPath, ip, path, cwd, cyberPanelPath, distro):
         self.ipAddr = ip
         self.path = path
         self.cwd = cwd
         self.server_root_path = rootPath
         self.cyberPanelPath = cyberPanelPath
+        self.distro = distro
 
     @staticmethod
-    def stdOut(message):
+    def stdOut(message, log=0, do_exit=0, code=os.EX_OK):
         print("\n\n")
         print ("[" + time.strftime(
-            "%I-%M-%S-%a-%b-%Y") + "] #########################################################################\n")
-        print("[" + time.strftime("%I-%M-%S-%a-%b-%Y") + "] " + message + "\n")
+            "%m.%d.%Y_%H-%M-%S") + "] #########################################################################\n")
+        print("[" + time.strftime("%m.%d.%Y_%H-%M-%S") + "] " + message + "\n")
         print ("[" + time.strftime(
-            "%I-%M-%S-%a-%b-%Y") + "] #########################################################################\n")
+            "%m.%d.%Y_%H-%M-%S") + "] #########################################################################\n")
+
+        if log:
+            logging.InstallLog.writeToFile(message)
+        if do_exit:
+            logging.InstallLog.writeToFile(message)
+            sys.exit(code)
+
+    def mountTemp(self):
+        try:
+            ## On OpenVZ there is an issue using .tempdisk for /tmp as it breaks network on container after reboot.
+
+            if subprocess.check_output('systemd-detect-virt').find("openvz") > -1:
+
+                varTmp = "/var/tmp /tmp none bind 0 0\n"
+
+                fstab = "/etc/fstab"
+                writeToFile = open(fstab, "a")
+                writeToFile.writelines(varTmp)
+                writeToFile.close()
+
+            else:
+
+                command = "dd if=/dev/zero of=/usr/.tempdisk bs=100M count=15"
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
+
+                command = "mkfs.ext4 -F /usr/.tempdisk"
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
+
+                command = "mkdir -p /usr/.tmpbak/"
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
+
+                command = "cp -pr /tmp/* /usr/.tmpbak/"
+                subprocess.call(command, shell=True)
+
+                command = "mount -o loop,rw,nodev,nosuid,noexec,nofail /usr/.tempdisk /tmp"
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
+
+                command = "chmod 1777 /tmp"
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
+
+                command = "cp -pr /usr/.tmpbak/* /tmp/"
+                subprocess.call(command, shell=True)
+
+                command = "rm -rf /usr/.tmpbak"
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
+
+                command = "mount --bind /tmp /var/tmp"
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
+
+                tmp = "/usr/.tempdisk /tmp ext4 loop,rw,noexec,nosuid,nodev,nofail 0 0\n"
+                varTmp = "/tmp /var/tmp none bind 0 0\n"
+
+                fstab = "/etc/fstab"
+                writeToFile = open(fstab, "a")
+                writeToFile.writelines(tmp)
+                writeToFile.writelines(varTmp)
+                writeToFile.close()
+
+        except BaseException, msg:
+            preFlightsChecks.stdOut('[ERROR] ' + str(msg))
+            return 0
+
+    @staticmethod
+    def pureFTPDServiceName(distro):
+        if distro == ubuntu:
+            return 'pure-ftpd'
+        return 'pure-ftpd'
+
+    @staticmethod
+    def resFailed(distro, res):
+        if distro == ubuntu and res != 0:
+            return True
+        elif distro == centos and res != 0:
+            return True
+        return False
+
+    @staticmethod
+    def call(command, distro, bracket, message, log=0, do_exit=0, code=os.EX_OK):
+        finalMessage = 'Running: %s' % (message)
+        preFlightsChecks.stdOut(finalMessage, log)
+        count = 0
+        while True:
+            res = subprocess.call(shlex.split(command))
+
+            if preFlightsChecks.resFailed(distro, res):
+                count = count + 1
+                finalMessage = 'Running %s failed. Running again, try number %s' % (message, str(count))
+                preFlightsChecks.stdOut(finalMessage)
+                if count == 3:
+                    fatal_message = ''
+                    if do_exit:
+                        fatal_message = '.  Fatal error, see /var/log/installLogs.txt for full details'
+
+                    preFlightsChecks.stdOut("[ERROR] We are not able to run " + message + ' return code: ' + str(res) +
+                                            fatal_message + ".", 1, do_exit, code)
+                    return False
+            else:
+                preFlightsChecks.stdOut('Successfully ran: %s.' % (message), log)
+                break
+
+        return True
 
     def checkIfSeLinuxDisabled(self):
         try:
@@ -42,14 +254,15 @@ class preFlightsChecks:
                 preFlightsChecks.stdOut("SELinux Check OK.")
                 return 1
             else:
-                logging.InstallLog.writeToFile("SELinux is enabled, please disable SELinux and restart the installation!")
+                logging.InstallLog.writeToFile(
+                    "SELinux is enabled, please disable SELinux and restart the installation!")
                 preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
                 os._exit(0)
 
-        except BaseException,msg:
-            logging.InstallLog.writeToFile(str(msg) + "[checkIfSeLinuxDisabled]")
-            logging.InstallLog.writeToFile("SELinux Check OK. [checkIfSeLinuxDisabled]")
-            preFlightsChecks.stdOut("SELinux Check OK.")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + "[checkIfSeLinuxDisabled]")
+            logging.InstallLog.writeToFile('[ERROR] ' + "SELinux Check OK. [checkIfSeLinuxDisabled]")
+            preFlightsChecks.stdOut('[ERROR] ' + "SELinux Check OK.")
             return 1
 
     def checkPythonVersion(self):
@@ -61,566 +274,166 @@ class preFlightsChecks:
 
     def setup_account_cyberpanel(self):
         try:
-            count = 0
 
-            while (1):
+            if self.distro == centos:
                 command = "yum install sudo -y"
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("SUDO install failed, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("We are not able to install SUDO, exiting the installer. [setup_account_cyberpanel]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("SUDO successfully installed!")
-                    preFlightsChecks.stdOut("SUDO successfully installed!")
-                    break
+                preFlightsChecks.call(command, self.distro, command,
+                                      command,
+                                      1, 0, os.EX_OSERR)
 
             ##
 
-            count = 0
+            if self.distro == ubuntu:
+                # self.stdOut("Fix sudoers")
+                # try:
+                #     fileName = '/etc/sudoers'
+                #     data = open(fileName, 'r').readlines()
+                #
+                #     writeDataToFile = open(fileName, 'w')
+                #     for line in data:
+                #         if line[:5] == '%sudo':
+                #             writeDataToFile.write('%sudo ALL=(ALL:ALL) NOPASSWD: ALL\n')
+                #         else:
+                #             writeDataToFile.write(line)
+                #     writeDataToFile.close()
+                # except IOError as err:
+                #     self.stdOut("Error in fixing sudoers file: " + str(err), 1, 1, os.EX_OSERR)
 
-            while (1):
-                command = "adduser cyberpanel"
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+                self.stdOut("Add Cyberpanel user")
+                command = 'adduser --disabled-login --gecos "" cyberpanel'
+                preFlightsChecks.call(command, self.distro, command,command,1, 1, os.EX_OSERR)
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Not able to add user cyberpanel to system, trying again, try number: " + str(count) + "\n")
-                    if count == 3:
-                        logging.InstallLog.writeToFile("We are not able add user cyberpanel to system, exiting the installer. [setup_account_cyberpanel]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("CyberPanel user added!")
-                    preFlightsChecks.stdOut("CyberPanel user added!")
-                    break
+            else:
+                command = "useradd -s /bin/false cyberpanel"
+                preFlightsChecks.call(command, self.distro, command,command,1, 1, os.EX_OSERR)
 
-            ##
-
-            count = 0
-
-            while (1):
-
-                command = "usermod -aG wheel cyberpanel"
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("We are trying to add CyberPanel user to SUDO group, trying again, try number: " + str(count) + "\n")
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Not able to add user CyberPanel to SUDO group, exiting the installer. [setup_account_cyberpanel]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("CyberPanel user was successfully added to SUDO group!")
-                    preFlightsChecks.stdOut("CyberPanel user was successfully added to SUDO group!")
-                    break
-
+                # ##
+                #
+                # command = "usermod -aG wheel cyberpanel"
+                # preFlightsChecks.call(command, self.distro, '[setup_account_cyberpanel]',
+                #                       'add user cyberpanel',
+                #                       1, 0, os.EX_OSERR)
 
             ###############################
 
-            path = "/etc/sudoers"
-
-            data = open(path, 'r').readlines()
-
-            writeToFile = open(path, 'w')
-
-            for items in data:
-                if items.find("wheel	ALL=(ALL)	NOPASSWD: ALL") > -1:
-                    writeToFile.writelines("%wheel	ALL=(ALL)	NOPASSWD: ALL")
-                else:
-                    writeToFile.writelines(items)
-
-            writeToFile.close()
+            # path = "/etc/sudoers"
+            #
+            # data = open(path, 'r').readlines()
+            #
+            # writeToFile = open(path, 'w')
+            #
+            # for items in data:
+            #     if items.find("wheel	ALL=(ALL)	NOPASSWD: ALL") > -1:
+            #         writeToFile.writelines("%wheel	ALL=(ALL)	NOPASSWD: ALL")
+            #     else:
+            #         writeToFile.writelines(items)
+            #
+            # writeToFile.close()
 
             ###############################
 
-            count = 0
+            ### Docker User/group
 
-            while (1):
-
-                command = "mkdir /etc/letsencrypt"
-
-                cmd = shlex.split(command)
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("We are trying to create Let's Encrypt directory to store SSLs, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Failed to create Let's Encrypt directory to store SSLs. Installer can continue without this.. [setup_account_cyberpanel]")
-                else:
-                    logging.InstallLog.writeToFile("Successfully created Let's Encrypt directory!")
-                    preFlightsChecks.stdOut("Successfully created Let's Encrypt directory!")
-                    break
-
-            ##
-
-        except:
-            logging.InstallLog.writeToFile("[116] setup_account_cyberpanel")
-            preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-            os._exit(0)
-
-    def yum_update(self):
-        try:
-            count = 0
-            while (1):
-
-                command = 'yum update -y'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("YUM UPDATE FAILED, trying again, try number: " + str(count) + "\n")
-                    if count == 3:
-                        logging.InstallLog.writeToFile("YUM update failed to run, we are being optimistic that installer will still be able to complete installation. [yum_update]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("YUM UPDATE ran successfully.")
-                    preFlightsChecks.stdOut("YUM UPDATE ran successfully.")
-                    break
-
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [yum_update]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [yum_update]")
-            return 0
-
-        return 1
-
-    def installCyberPanelRepo(self):
-        cmd = []
-        count = 0
-
-        while(1):
-            cmd.append("rpm")
-            cmd.append("-ivh")
-            cmd.append("http://rpms.litespeedtech.com/centos/litespeed-repo-1.1-1.el7.noarch.rpm")
-            res = subprocess.call(cmd)
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to add CyberPanel official repository, trying again, try number: " + str(count) + "\n")
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to add CyberPanel official repository, exiting installer! [installCyberPanelRepo]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
+            if self.distro == ubuntu:
+                command = 'adduser --disabled-login --gecos "" docker'
             else:
-                logging.InstallLog.writeToFile("CyberPanel Repo added!")
-                preFlightsChecks.stdOut("CyberPanel Repo added!")
-                break
+                command = "adduser docker"
 
-    def enableEPELRepo(self):
-        try:
-            cmd = []
-            count = 0
+            preFlightsChecks.call(command, self.distro, command,command,1, 0, os.EX_OSERR)
 
-            while (1):
-                cmd.append("yum")
-                cmd.append("-y")
-                cmd.append("install")
-                cmd.append("epel-release")
-                res = subprocess.call(cmd)
+            command = 'groupadd docker'
+            preFlightsChecks.call(command, self.distro, command,command,1, 0, os.EX_OSERR)
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to add EPEL repository, trying again, try number: " + str(count) + "\n")
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to add EPEL repository, exiting installer! [enableEPELRepo]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("EPEL Repo added!")
-                    preFlightsChecks.stdOut("EPEL Repo added!")
-                    break
+            command = 'usermod -aG docker docker'
+            preFlightsChecks.call(command, self.distro, command,command,1, 0, os.EX_OSERR)
 
-        except OSError,msg:
-            logging.InstallLog.writeToFile(str(msg) + " [enableEPELRepo]")
-            preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-            os._exit(0)
-            return 0
-        except ValueError,msg:
-            logging.InstallLog.writeToFile(str(msg) + " [enableEPELRepo]")
-            preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-            os._exit(0)
-            return 0
+            command = 'usermod -aG docker cyberpanel'
+            preFlightsChecks.call(command, self.distro, command,command,1, 0, os.EX_OSERR)
 
-        return 1
+            ###
 
-    def install_pip(self):
-        count = 0
-        while (1):
-            command = "yum -y install python-pip"
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to install PIP, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to install PIP, exiting installer! [install_pip]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("PIP successfully installed!")
-                preFlightsChecks.stdOut("PIP successfully installed!")
-                break
-
-    def install_python_dev(self):
-        count = 0
-        while (1):
-            command = "yum -y install python-devel"
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("We are trying to install python development tools, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to install python development tools, exiting installer! [install_python_dev]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("Python development tools successfully installed!")
-                preFlightsChecks.stdOut("Python development tools successfully installed!")
-                break
-
-    def install_gcc(self):
-        count = 0
-
-        while (1):
-            command = "yum -y install gcc"
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to install GCC, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to install GCC, exiting installer! [install_gcc]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("GCC Successfully installed!")
-                preFlightsChecks.stdOut("GCC Successfully installed!")
-                break
-
-    def install_python_setup_tools(self):
-        count = 0
-        while (1):
-            command = "yum -y install python-setuptools"
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                print("[" + time.strftime(
-                    "%I-%M-%S-%a-%b-%Y") + "] " + "Unable to install Python setup tools, trying again, try number: " + str(
-                    count) + "\n")
-                if count == 3:
-                    logging.InstallLog.writeToFile(
-                        "Unable to install Python setup tools, exiting installer! [install_python_setup_tools]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("Python setup tools Successfully installed!")
-                print("[" + time.strftime("%I-%M-%S-%a-%b-%Y") + "] " + "Python setup tools Successfully installed!")
-                break
-
-    def install_python_requests(self):
-        try:
-            import requests
-
-            ## Un-install ULRLIB3 and requests
-
-            command = "pip uninstall --yes urllib3"
-            res = subprocess.call(shlex.split(command))
-
-            command = "pip uninstall --yes requests"
-            res = subprocess.call(shlex.split(command))
-
-
-            ## Install specific versions
-
-            count = 0
-            while (1):
-
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/urllib3-1.22.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Unable to install urllib3 module, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to install urllib3 module, exiting installer! [install_python_requests]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("urllib3 module Successfully installed!")
-                    preFlightsChecks.stdOut("urllib3 module Successfully installed!")
-                    break
-
-            count = 0
-            while (1):
-
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/requests-2.18.4.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Unable to install requests module, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to install requests module, exiting installer! [install_python_requests]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("Requests module Successfully installed!")
-                    preFlightsChecks.stdOut("Requests module Successfully installed!")
-                    break
-
-        except:
-
-            count = 0
-            while (1):
-
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/urllib3-1.22.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Unable to install urllib3 module, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to install urllib3 module, exiting installer! [install_python_requests]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("urllib3 module Successfully installed!")
-                    preFlightsChecks.stdOut("urllib3 module Successfully installed!")
-                    break
-
-            count = 0
-            while (1):
-
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/requests-2.18.4.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Unable to install requests module, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to install requests module, exiting installer! [install_python_requests]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("Requests module Successfully installed!")
-                    preFlightsChecks.stdOut("Requests module Successfully installed!")
-                    break
-
-    def install_pexpect(self):
-        try:
-            import pexpect
-
-            command = "pip uninstall --yes pexpect"
-            res = subprocess.call(shlex.split(command))
-
-            count = 0
-
-            while (1):
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/pexpect-4.4.0.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install pexpect, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install pexpect, exiting installer! [install_pexpect]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("pexpect successfully installed!")
-                    preFlightsChecks.stdOut("pexpect successfully installed!")
-                    break
-
-        except:
-            count = 0
-            while (1):
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/pexpect-4.4.0.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install pexpect, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install pexpect, exiting installer! [install_pexpect]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("pexpect successfully installed!")
-                    preFlightsChecks.stdOut("pexpect successfully installed!")
-                    break
-
-    def install_django(self):
-        count = 0
-        while (1):
-            command = "pip install django==1.11"
-
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to install DJANGO, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to install DJANGO, exiting installer! [install_django]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("DJANGO successfully installed!")
-                preFlightsChecks.stdOut("DJANGO successfully installed!")
-                break
-
-    def install_python_mysql_library(self):
-        count = 0
-        while (1):
-            command = "yum -y install MySQL-python"
-            res = subprocess.call(shlex.split(command))
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to install MySQL-python, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to install MySQL-python, exiting installer! [install_python_mysql_library]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("MySQL-python successfully installed!")
-                preFlightsChecks.stdOut("MySQL-python successfully installed!")
-                break
-
-    def install_gunicorn(self):
-        count = 0
-        while (1):
-            command = "easy_install gunicorn"
-            res = subprocess.call(shlex.split(command))
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to install GUNICORN, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to install GUNICORN, exiting installer! [install_gunicorn]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("GUNICORN successfully installed!")
-                preFlightsChecks.stdOut("GUNICORN successfully installed!")
-                break
-
-    def setup_gunicorn(self):
-        try:
-
-            os.chdir(self.cwd)
-
-            ##
-
-            logging.InstallLog.writeToFile("Configuring Gunicorn..")
-
-            service = "/etc/systemd/system/gunicorn.service"
-            socket = "/etc/systemd/system/gunicorn.socket"
-            conf = "/etc/tmpfiles.d/gunicorn.conf"
-
-
-            shutil.copy("gun-configs/gunicorn.service",service)
-            shutil.copy("gun-configs/gunicorn.socket",socket)
-            shutil.copy("gun-configs/gunicorn.conf", conf)
-
-            logging.InstallLog.writeToFile("Gunicorn Configured!")
-
-            ### Enable at system startup
-
-            count = 0
-
-            while(1):
-                command = "systemctl enable gunicorn.socket"
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to enable Gunicorn at system startup, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Gunicorn will not start after system restart, you can manually enable using systemctl enable gunicorn.socket! [setup_gunicorn]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Gunicorn can now start after system restart!")
-                    preFlightsChecks.stdOut("Gunicorn can now start after system restart!")
-                    break
+            command = "mkdir -p /etc/letsencrypt/live/"
+            preFlightsChecks.call(command, self.distro, command,command,1, 0, os.EX_OSERR)
 
         except BaseException, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setup_gunicorn]")
-            preFlightsChecks.stdOut("Not able to setup gunicorn, see install log.")
+            logging.InstallLog.writeToFile("[ERROR] setup_account_cyberpanel. " + str(msg))
 
-    def install_psutil(self):
+    def yum_update(self):
+        command = 'yum update -y'
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-        try:
-            import psutil
+    def installCyberPanelRepo(self):
+        self.stdOut("Install Cyberpanel repo")
 
-            ##
+        if self.distro == ubuntu:
+            try:
+                filename = "enable_lst_debain_repo.sh"
+                command = "wget http://rpms.litespeedtech.com/debian/" + filename
+                preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
-            command = "pip uninstall --yes psutil"
-            res = subprocess.call(shlex.split(command))
+                os.chmod(filename, S_IRWXU | S_IRWXG)
 
-            count = 0
-            while (1):
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/psutil-5.4.3.tar.gz"
-                res = subprocess.call(shlex.split(command))
+                command = "./" + filename
+                preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+            except:
+                logging.InstallLog.writeToFile("[ERROR] Exception during CyberPanel install")
+                preFlightsChecks.stdOut("[ERROR] Exception during CyberPanel install")
+                os._exit(os.EX_SOFTWARE)
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install psutil, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install psutil, exiting installer! [install_psutil]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("psutil successfully installed!")
-                    preFlightsChecks.stdOut("psutil successfully installed!")
-                    break
+        else:
+            command = 'rpm -ivh http://rpms.litespeedtech.com/centos/litespeed-repo-1.1-1.el7.noarch.rpm'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
-        except:
-            count = 0
-            while (1):
-                command = "pip install http://"+preFlightsChecks.cyberPanelMirror+"/psutil-5.4.3.tar.gz"
-                res = subprocess.call(shlex.split(command))
+    def enableEPELRepo(self):
+        command = 'yum -y install epel-release'
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install psutil, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install psutil, exiting installer! [install_psutil]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("psutil successfully installed!")
-                    preFlightsChecks.stdOut("psutil successfully installed!")
-                    break
+    def install_pip(self):
+        self.stdOut("Install pip")
+        if self.distro == ubuntu:
+            command = "apt-get -y install python-pip"
+        else:
+            command = "yum -y install python-pip"
+
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+
+    def install_python_dev(self):
+        self.stdOut("Install python development environment")
+
+        if self.distro == centos:
+            command = "yum -y install python-devel"
+        else:
+            command = "apt-get -y install python-dev"
+
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+
+    def install_gcc(self):
+        self.stdOut("Install gcc")
+
+        if self.distro == centos:
+            command = "yum -y install gcc"
+        else:
+            command = "apt-get -y install gcc"
+
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+
+    def install_python_setup_tools(self):
+        command = "yum -y install python-setuptools"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+
+    def install_python_mysql_library(self):
+        self.stdOut("Install MySQL python library")
+
+        if self.distro == centos:
+            command = "yum -y install MySQL-python"
+        else:
+            command = "apt-get -y install libmysqlclient-dev"
+
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+
+        if self.distro == ubuntu:
+            command = "pip install MySQL-python"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
     def fix_selinux_issue(self):
         try:
@@ -633,98 +446,49 @@ class preFlightsChecks:
 
             res = subprocess.call(cmd)
 
-            if res == 1:
+            if preFlightsChecks.resFailed(self.distro, res):
                 logging.InstallLog.writeToFile("fix_selinux_issue problem")
             else:
                 pass
         except:
-            logging.InstallLog.writeToFile("fix_selinux_issue problem")
+            logging.InstallLog.writeToFile("[ERROR] fix_selinux_issue problem")
 
     def install_psmisc(self):
-        count = 0
-        while (1):
+        self.stdOut("Install psmisc")
+
+        if self.distro == centos:
             command = "yum -y install psmisc"
-            res = subprocess.call(shlex.split(command))
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to install psmisc, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to install psmisc, exiting installer! [install_psmisc]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("psmisc successfully installed!")
-                preFlightsChecks.stdOut("psmisc successfully installed!")
-                break
+        else:
+            command = "apt-get -y install psmisc"
 
-    def download_install_CyberPanel(self,mysqlPassword, mysql):
-        try:
-            ## On OpenVZ there is an issue with requests module, which needs to upgrade requests module
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            if subprocess.check_output('systemd-detect-virt').find("openvz")>-1:
-                count = 0
-                while(1):
-                    command = "pip install --upgrade requests"
-                    res = subprocess.call(shlex.split(command))
+    def installGit(self):
+        if os.path.exists("/etc/lsb-release"):
+            command = 'apt -y install git'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+        else:
+            command = 'yum -y install http://repo.iotti.biz/CentOS/7/noarch/lux-release-7-1.noarch.rpm'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-                    if res == 1:
-                        count = count + 1
-                        preFlightsChecks.stdOut("Unable to upgrade requests, trying again, try number: " + str(count))
-                        if count == 3:
-                            logging.InstallLog.writeToFile("Unable to install upgrade requests, exiting installer! [download_install_CyberPanel]")
-                            preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                            os._exit(0)
-                    else:
-                        logging.InstallLog.writeToFile("requests module successfully upgraded!")
-                        preFlightsChecks.stdOut("requests module successfully upgraded!")
-                        break
-        except:
-            pass
+            command = 'yum install git -y'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
+    def download_install_CyberPanel(self, mysqlPassword, mysql):
         ##
 
         os.chdir(self.path)
 
-        count = 0
-        while (1):
-            command = "wget http://cyberpanel.net/CyberPanel.1.7.0.tar.gz"
-            #command = "wget http://cyberpanel.net/CyberPanelTemp.tar.gz"
-            res = subprocess.call(shlex.split(command))
+        self.installGit()
 
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to download CyberPanel, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to download CyberPanel, exiting installer! [download_install_CyberPanel]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("CyberPanel successfully downloaded!")
-                preFlightsChecks.stdOut("CyberPanel successfully downloaded!")
-                break
+        os.chdir('/usr/local')
+
+        command = "git clone https://github.com/usmannasir/cyberpanel"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+
+        shutil.move('cyberpanel', 'CyberCP')
 
         ##
-
-        count = 0
-        while(1):
-            command = "tar zxf CyberPanel.1.7.0.tar.gz"
-            #command = "tar zxf CyberPanelTemp.tar.gz"
-
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to extract CyberPanel, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to extract CyberPanel. You can try to install on fresh OS again, exiting installer! [download_install_CyberPanel]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("Successfully extracted CyberPanel!")
-                preFlightsChecks.stdOut("Successfully extracted CyberPanel!")
-                break
-
-
 
         ### update password:
 
@@ -738,7 +502,7 @@ class preFlightsChecks:
 
         logging.InstallLog.writeToFile("Updating settings.py!")
 
-        path = self.cyberPanelPath+"/CyberCP/settings.py"
+        path = self.cyberPanelPath + "/CyberCP/settings.py"
 
         data = open(path, "r").readlines()
 
@@ -747,6 +511,10 @@ class preFlightsChecks:
         counter = 0
 
         for items in data:
+            if items.find('SECRET_KEY') > -1:
+                SK = "SECRET_KEY = '%s'\n" % (generate_pass(50))
+                writeDataToFile.writelines(SK)
+                continue
             if mysql == 'Two':
                 if items.find("'PASSWORD':") > -1:
                     if counter == 0:
@@ -772,249 +540,199 @@ class preFlightsChecks:
                 else:
                     writeDataToFile.writelines(items)
 
+        if self.distro == ubuntu:
+            os.fchmod(writeDataToFile.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+
         writeDataToFile.close()
 
         logging.InstallLog.writeToFile("settings.py updated!")
 
-        ### Applying migrations
+        self.setupVirtualEnv(self.distro)
 
+        ### Applying migrations
 
         os.chdir("CyberCP")
 
-        count = 0
-
-        while(1):
-            command = "python manage.py makemigrations"
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to prepare migrations file, trying again, try number: " + str(count) + "\n")
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to prepare migrations file. You can try to install on fresh OS again, exiting installer! [download_install_CyberPanel]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("Successfully prepared migrations file!")
-                preFlightsChecks.stdOut("Successfully prepared migrations file!")
-                break
+        command = "/usr/local/CyberCP/bin/python2 manage.py makemigrations"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
         ##
 
-        count = 0
+        command = "/usr/local/CyberCP/bin/python2 manage.py migrate"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
-        while(1):
-            command = "python manage.py migrate"
-
-            res = subprocess.call(shlex.split(command))
-
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to execute the migrations file, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to execute the migrations file, exiting installer! [download_install_CyberPanel]")
-                    preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                    os._exit(0)
-            else:
-                logging.InstallLog.writeToFile("Migrations file successfully executed!")
-                preFlightsChecks.stdOut("Migrations file successfully executed!")
-                break
+        if not os.path.exists("/usr/local/CyberCP/public"):
+            os.mkdir("/usr/local/CyberCP/public")
 
         ## Moving static content to lscpd location
-        command = 'mv static /usr/local/lscp/cyberpanel'
-        cmd = shlex.split(command)
-        res = subprocess.call(cmd)
+        command = 'mv static /usr/local/CyberCP/public/'
+        preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
-        if res == 1:
-            logging.InstallLog.writeToFile("Could not move static content!")
-            preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-            os._exit(0)
-        else:
-            logging.InstallLog.writeToFile("Static content moved!")
-            preFlightsChecks.stdOut("Static content moved!")
+        try:
+            import requests
+            getVersion = requests.get('https://raw.githubusercontent.com/usmannasir/cyberpanel/stable/version.txt')
+            latest = getVersion.json()
+            path = "/usr/local/CyberCP/version.txt"
+            writeToFile = open(path, 'w')
+            writeToFile.writelines('%s\n' % (str(latest['version'])))
+            writeToFile.writelines(str(latest['build']))
+            writeToFile.close()
+        except:
+            pass
 
+    def fixCyberPanelPermissions(self):
 
-        ## fix permissions
+        ###### fix Core CyberPanel permissions
 
-        count = 0
+        command = "usermod -G lscpd,lsadm,nobody lscpd"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-        while(1):
-            command = "chmod -R 744 /usr/local/CyberCP"
-            res = subprocess.call(shlex.split(command))
+        command = "usermod -G lscpd,lsadm,nogroup lscpd"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Changing permissions for '/usr/local/CyberCP' failed, trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to change permissions for '/usr/local/CyberCP', we are being optimistic that it is still going to work :) [download_install_CyberPanel]")
-                    break
-            else:
-                logging.InstallLog.writeToFile("Permissions successfully changed for '/usr/local/CyberCP'")
-                preFlightsChecks.stdOut("Permissions successfully changed for '/usr/local/CyberCP'")
-                break
+        command = "find /usr/local/CyberCP -type d -exec chmod 0755 {} \;"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "find /usr/local/CyberCP -type f -exec chmod 0644 {} \;"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chmod -R 755 /usr/local/CyberCP/bin"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
         ## change owner
 
-        count = 0
-        while(1):
-            command = "chown -R cyberpanel:cyberpanel /usr/local/CyberCP"
-            res = subprocess.call(shlex.split(command))
+        command = "chown -R root:root /usr/local/CyberCP"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            if res == 1:
-                count = count + 1
-                preFlightsChecks.stdOut("Unable to change owner for '/usr/local/CyberCP', trying again, try number: " + str(count))
-                if count == 3:
-                    logging.InstallLog.writeToFile("Unable to change owner for '/usr/local/CyberCP', we are being optimistic that it is still going to work :) [download_install_CyberPanel]")
-                    break
-            else:
-                logging.InstallLog.writeToFile("Owner for '/usr/local/CyberCP' successfully changed!")
-                preFlightsChecks.stdOut("Owner for '/usr/local/CyberCP' successfully changed!")
-                break
+        ########### Fix LSCPD
 
+        command = "find /usr/local/lscp -type d -exec chmod 0755 {} \;"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "find /usr/local/lscp -type f -exec chmod 0644 {} \;"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chmod -R 755 /usr/local/lscp/bin"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chmod -R 755 /usr/local/lscp/fcgi-bin"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chown -R lscpd:lscpd /usr/local/CyberCP/public/phpmyadmin/tmp"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        ## change owner
+
+        command = "chown -R root:root /usr/local/lscp"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chown -R lscpd:lscpd /usr/local/lscp/cyberpanel/rainloop/data"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chmod 700 /usr/local/CyberCP/cli/cyberPanel.py"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chmod 700 /usr/local/CyberCP/plogical/upgradeCritical.py"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chmod 755 /usr/local/CyberCP/postfixSenderPolicy/client.py"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chmod 640 /usr/local/CyberCP/CyberCP/settings.py"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = "chown root:cyberpanel /usr/local/CyberCP/CyberCP/settings.py"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        files = ['/etc/yum.repos.d/MariaDB.repo', '/etc/pdns/pdns.conf', '/etc/systemd/system/lscpd.service',
+                 '/etc/pure-ftpd/pure-ftpd.conf', '/etc/pure-ftpd/pureftpd-pgsql.conf',
+                 '/etc/pure-ftpd/pureftpd-mysql.conf', '/etc/pure-ftpd/pureftpd-ldap.conf',
+                 '/etc/dovecot/dovecot.conf', '/usr/local/lsws/conf/httpd_config.xml',
+                 '/usr/local/lsws/conf/modsec.conf', '/usr/local/lsws/conf/httpd.conf']
+
+        for items in files:
+            command = 'chmod 644 %s' % (items)
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        impFile = ['/etc/pure-ftpd/pure-ftpd.conf', '/etc/pure-ftpd/pureftpd-pgsql.conf',
+                   '/etc/pure-ftpd/pureftpd-mysql.conf', '/etc/pure-ftpd/pureftpd-ldap.conf',
+                   '/etc/dovecot/dovecot.conf', '/etc/pdns/pdns.conf', '/etc/pure-ftpd/db/mysql.conf',
+                   '/etc/powerdns/pdns.conf']
+
+        for items in impFile:
+            command = 'chmod 600 %s' % (items)
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        command = 'chmod 640 /etc/postfix/*.cf'
+        subprocess.call(command, shell=True)
+
+        command = 'chmod 644 /etc/postfix/main.cf'
+        subprocess.call(command, shell=True)
+
+        command = 'chmod 640 /etc/dovecot/*.conf'
+        subprocess.call(command, shell=True)
+
+        command = 'chmod 644 /etc/dovecot/dovecot.conf'
+        subprocess.call(command, shell=True)
+
+        command = 'chmod 640 /etc/dovecot/dovecot-sql.conf.ext'
+        subprocess.call(command, shell=True)
+
+        command = 'chmod 644 /etc/postfix/dynamicmaps.cf'
+        subprocess.call(command, shell=True)
+
+        fileM = ['/usr/local/lsws/FileManager/', '/usr/local/CyberCP/install/FileManager',
+                 '/usr/local/CyberCP/serverStatus/litespeed/FileManager', '/usr/local/lsws/Example/html/FileManager']
+
+        for items in fileM:
+            try:
+                shutil.rmtree(items)
+            except:
+                pass
+
+        command = 'chmod 755 /etc/pure-ftpd/'
+        subprocess.call(command, shell=True)
+
+        command = 'chmod +x /usr/local/CyberCP/plogical/renew.py'
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
     def install_unzip(self):
+        self.stdOut("Install unzip")
         try:
-
-            count = 0
-
-            while (1):
+            if self.distro == centos:
                 command = 'yum -y install unzip'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+            else:
+                command = 'apt-get -y install unzip'
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install unzip, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install unzip, exiting installer! [install_unzip]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("unzip successfully installed!")
-                    preFlightsChecks.stdOut("unzip Successfully installed!")
-                    break
-
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_unzip]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_unzip]")
-            return 0
-
-        return 1
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] '+ str(msg) + " [install_unzip]")
 
     def install_zip(self):
+        self.stdOut("Install zip")
         try:
-            count = 0
-            while (1):
-
+            if self.distro == centos:
                 command = 'yum -y install zip'
+            else:
+                command = 'apt-get -y install zip'
 
-                cmd = shlex.split(command)
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install zip, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install zip, exiting installer! [install_zip]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("zip successfully installed!")
-                    preFlightsChecks.stdOut("zip successfully installed!")
-                    break
-
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_zip]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_zip]")
-            return 0
-
-        return 1
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [install_zip]")
 
     def download_install_phpmyadmin(self):
         try:
-            os.chdir("/usr/local/lscp/cyberpanel/")
-            count = 0
 
-            while(1):
-                command = 'wget https://files.phpmyadmin.net/phpMyAdmin/4.8.2/phpMyAdmin-4.8.2-all-languages.zip'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+            if not os.path.exists("/usr/local/CyberCP/public"):
+                os.mkdir("/usr/local/CyberCP/public")
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to download PYPMYAdmin, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to download PYPMYAdmin, exiting installer! [download_install_phpmyadmin]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("PHPMYAdmin successfully downloaded!")
-                    preFlightsChecks.stdOut("PHPMYAdmin successfully downloaded!")
-                    break
+            os.chdir("/usr/local/CyberCP/public")
 
-            #####
-
-            count = 0
-
-            while(1):
-                command = 'unzip phpMyAdmin-4.8.2-all-languages.zip'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    print("[" + time.strftime(
-                        "%I-%M-%S-%a-%b-%Y") + "] " + "Unable to unzip PHPMYAdmin, trying again, try number: " + str(
-                        count) + "\n")
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to unzip PHPMYAdmin, exiting installer! [download_install_phpmyadmin]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("PHPMYAdmin unzipped!")
-                    print(
-                        "[" + time.strftime("%I-%M-%S-%a-%b-%Y") + "] " + "PHPMYAdmin unzipped!")
-                    break
-
-            ###
-
-            os.remove("phpMyAdmin-4.8.2-all-languages.zip")
-
-            count = 0
-
-            while(1):
-                command = 'mv phpMyAdmin-4.8.2-all-languages phpmyadmin'
-
-                cmd = shlex.split(command)
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    print("[" + time.strftime(
-                        "%I-%M-%S-%a-%b-%Y") + "] " + "Unable to install PHPMYAdmin, trying again, try number: " + str(
-                        count) + "\n")
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to install PHPMYAdmin, exiting installer! [download_install_phpmyadmin]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("PHPMYAdmin Successfully installed!")
-                    print(
-                        "[" + time.strftime("%I-%M-%S-%a-%b-%Y") + "] " + "PHPMYAdmin Successfully installed!")
-                    break
+            command = 'composer create-project phpmyadmin/phpmyadmin'
+            preFlightsChecks.call(command, self.distro, '[download_install_phpmyadmin]',
+                                  'Download PHPMYAdmin', 1, 0, os.EX_OSERR)
 
             ## Write secret phrase
-
 
             rString = ''.join([random.choice(string.ascii_letters + string.digits) for n in xrange(32)])
 
@@ -1022,1079 +740,640 @@ class preFlightsChecks:
 
             writeToFile = open('phpmyadmin/config.inc.php', 'w')
 
-
             for items in data:
                 if items.find('blowfish_secret') > -1:
-                    writeToFile.writelines("$cfg['blowfish_secret'] = '" + rString + "'; /* YOU MUST FILL IN THIS FOR COOKIE AUTH! */\n")
+                    writeToFile.writelines(
+                        "$cfg['blowfish_secret'] = '" + rString + "'; /* YOU MUST FILL IN THIS FOR COOKIE AUTH! */\n")
                 else:
                     writeToFile.writelines(items)
 
-            writeToFile.writelines("$cfg['TempDir'] = '/usr/local/lscp/cyberpanel/phpmyadmin/tmp';\n")
+            writeToFile.writelines("$cfg['TempDir'] = '/usr/local/CyberCP/public/phpmyadmin/tmp';\n")
 
             writeToFile.close()
 
-            os.mkdir('/usr/local/lscp/cyberpanel/phpmyadmin/tmp')
+            os.mkdir('/usr/local/CyberCP/public/phpmyadmin/tmp')
 
-            command = 'chown -R nobody:nobody /usr/local/lscp/cyberpanel/phpmyadmin'
-            subprocess.call(shlex.split(command))
+            command = 'chown -R lscpd:lscpd /usr/local/CyberCP/public/phpmyadmin'
+            preFlightsChecks.call(command, self.distro, '[chown -R lscpd:lscpd /usr/local/CyberCP/public/phpmyadmin]',
+                                  'chown -R lscpd:lscpd /usr/local/CyberCP/public/phpmyadmin', 1, 0, os.EX_OSERR)
 
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [download_install_phpmyadmin]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [download_install_phpmyadmin]")
             return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [download_install_phpmyadmin]")
-            return 0
-
-        return 1
-
 
     ###################################################### Email setup
 
-
     def install_postfix_davecot(self):
+        self.stdOut("Install dovecot - first remove postfix")
+
+        if self.distro == centos:
+            path = '/etc/yum.repos.d/dovecot.repo'
+            content = """[dovecot-2.3-latest]
+name=Dovecot 2.3 CentOS $releasever - $basearch
+baseurl=http://repo.dovecot.org/ce-2.3-latest/centos/$releasever/RPMS/$basearch
+gpgkey=https://repo.dovecot.org/DOVECOT-REPO-GPG
+gpgcheck=1
+enabled=1"""
+            writeToFile = open(path, 'w')
+            writeToFile.write(content)
+            writeToFile.close()
+
         try:
-
-            count = 0
-
-            while(1):
-                command = 'yum -y --enablerepo=centosplus install postfix'
-
-                cmd = shlex.split(command)
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install Postfix, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install Postfix, you will not be able to send mails and rest should work fine! [install_postfix_davecot]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Postfix successfully installed!")
-                    preFlightsChecks.stdOut("Postfix successfully installed!")
-                    break
-
-            count = 0
-
-            while(1):
-
-                command = 'yum -y install dovecot dovecot-mysql'
-
-                cmd = shlex.split(command)
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install Dovecot and Dovecot-MySQL, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install install Dovecot and Dovecot-MySQL, you will not be able to send mails and rest should work fine! [install_postfix_davecot]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Dovecot and Dovecot-MySQL successfully installed!")
-                    preFlightsChecks.stdOut("Dovecot and Dovecot-MySQL successfully installed!")
-                    break
-
-
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_postfix_davecot]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_postfix_davecot]")
-            return 0
-
-        return 1
-
-
-    def setup_email_Passwords(self,mysqlPassword, mysql):
-        try:
-
-           logging.InstallLog.writeToFile("Setting up authentication for Postfix and Dovecot...")
-
-           os.chdir(self.cwd)
-
-           if mysql == 'Two':
-               mysql_virtual_domains = "email-configs/mysql-virtual_domains.cf"
-               mysql_virtual_forwardings = "email-configs/mysql-virtual_forwardings.cf"
-               mysql_virtual_mailboxes = "email-configs/mysql-virtual_mailboxes.cf"
-               mysql_virtual_email2email = "email-configs/mysql-virtual_email2email.cf"
-               davecotmysql = "email-configs/dovecot-sql.conf.ext"
-           else:
-               mysql_virtual_domains = "email-configs-one/mysql-virtual_domains.cf"
-               mysql_virtual_forwardings = "email-configs-one/mysql-virtual_forwardings.cf"
-               mysql_virtual_mailboxes = "email-configs-one/mysql-virtual_mailboxes.cf"
-               mysql_virtual_email2email = "email-configs-one/mysql-virtual_email2email.cf"
-               davecotmysql = "email-configs-one/dovecot-sql.conf.ext"
-
-           ### update password:
-
-           data = open(davecotmysql, "r").readlines()
-
-           writeDataToFile = open(davecotmysql, "w")
-
-           if mysql == 'Two':
-               dataWritten = "connect = host=127.0.0.1 dbname=cyberpanel user=cyberpanel password="+mysqlPassword+" port=3307\n"
-           else:
-               dataWritten = "connect = host=localhost dbname=cyberpanel user=cyberpanel password=" + mysqlPassword + " port=3306\n"
-
-           for items in data:
-               if items.find("connect") > -1:
-                   writeDataToFile.writelines(dataWritten)
-               else:
-                   writeDataToFile.writelines(items)
-
-           writeDataToFile.close()
-
-           ### update password:
-
-           data = open(mysql_virtual_domains, "r").readlines()
-
-           writeDataToFile = open(mysql_virtual_domains, "w")
-
-           dataWritten = "password = " + mysqlPassword + "\n"
-
-           for items in data:
-               if items.find("password") > -1:
-                   writeDataToFile.writelines(dataWritten)
-               else:
-                   writeDataToFile.writelines(items)
-
-           writeDataToFile.close()
-
-           ### update password:
-
-           data = open(mysql_virtual_forwardings, "r").readlines()
-
-           writeDataToFile = open(mysql_virtual_forwardings, "w")
-
-           dataWritten = "password = " + mysqlPassword + "\n"
-
-           for items in data:
-               if items.find("password") > -1:
-                   writeDataToFile.writelines(dataWritten)
-               else:
-                   writeDataToFile.writelines(items)
-
-           writeDataToFile.close()
-
-           ### update password:
-
-           data = open(mysql_virtual_mailboxes, "r").readlines()
-
-           writeDataToFile = open(mysql_virtual_mailboxes, "w")
-
-           dataWritten = "password = " + mysqlPassword + "\n"
-
-           for items in data:
-               if items.find("password") > -1:
-                   writeDataToFile.writelines(dataWritten)
-               else:
-                   writeDataToFile.writelines(items)
-
-           writeDataToFile.close()
-
-           ### update password:
-
-           data = open(mysql_virtual_email2email, "r").readlines()
-
-           writeDataToFile = open(mysql_virtual_email2email, "w")
-
-           dataWritten = "password = " + mysqlPassword + "\n"
-
-           for items in data:
-               if items.find("password") > -1:
-                   writeDataToFile.writelines(dataWritten)
-               else:
-                   writeDataToFile.writelines(items)
-
-           writeDataToFile.close()
-
-           logging.InstallLog.writeToFile("Authentication for Postfix and Dovecot set.")
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setup_email_Passwords]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setup_email_Passwords]")
-            return 0
-
-        return 1
-
-
-    def setup_postfix_davecot_config(self, mysql):
-        try:
-           logging.InstallLog.writeToFile("Configuring postfix and dovecot...")
-
-           os.chdir(self.cwd)
-
-
-           mysql_virtual_domains = "/etc/postfix/mysql-virtual_domains.cf"
-           mysql_virtual_forwardings = "/etc/postfix/mysql-virtual_forwardings.cf"
-           mysql_virtual_mailboxes = "/etc/postfix/mysql-virtual_mailboxes.cf"
-           mysql_virtual_email2email = "/etc/postfix/mysql-virtual_email2email.cf"
-           main = "/etc/postfix/main.cf"
-           master = "/etc/postfix/master.cf"
-           davecot = "/etc/dovecot/dovecot.conf"
-           davecotmysql = "/etc/dovecot/dovecot-sql.conf.ext"
-
-
-
-           if os.path.exists(mysql_virtual_domains):
-               os.remove(mysql_virtual_domains)
-
-           if os.path.exists(mysql_virtual_forwardings):
-               os.remove(mysql_virtual_forwardings)
-
-           if os.path.exists(mysql_virtual_mailboxes):
-               os.remove(mysql_virtual_mailboxes)
-
-           if os.path.exists(mysql_virtual_email2email):
-               os.remove(mysql_virtual_email2email)
-
-           if os.path.exists(main):
-               os.remove(main)
-
-           if os.path.exists(master):
-               os.remove(master)
-
-           if os.path.exists(davecot):
-               os.remove(davecot)
-
-           if os.path.exists(davecotmysql):
-               os.remove(davecotmysql)
-
-
-
-           ###############Getting SSL
-
-           count = 0
-
-           while(1):
-               command = 'openssl req -newkey rsa:1024 -new -nodes -x509 -days 3650 -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com" -keyout /etc/postfix/key.pem -out /etc/postfix/cert.pem'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to generate SSL for Postfix, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to generate SSL for Postfix, you will not be able to send emails and rest should work fine! [setup_postfix_davecot_config]")
-                       return
-               else:
-                   logging.InstallLog.writeToFile("SSL for Postfix generated!")
-                   preFlightsChecks.stdOut("SSL for Postfix generated!")
-                   break
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'openssl req -newkey rsa:1024 -new -nodes -x509 -days 3650 -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com" -keyout /etc/dovecot/key.pem -out /etc/dovecot/cert.pem'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to generate ssl for Dovecot, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to generate SSL for Dovecot, you will not be able to send emails and rest should work fine! [setup_postfix_davecot_config]")
-                       return
-               else:
-                   logging.InstallLog.writeToFile("SSL generated for Dovecot!")
-                   preFlightsChecks.stdOut("SSL generated for Dovecot!")
-                   break
-
-
-
-           ########### Copy config files
-
-           if mysql == 'Two':
-               shutil.copy("email-configs/mysql-virtual_domains.cf","/etc/postfix/mysql-virtual_domains.cf")
-               shutil.copy("email-configs/mysql-virtual_forwardings.cf", "/etc/postfix/mysql-virtual_forwardings.cf")
-               shutil.copy("email-configs/mysql-virtual_mailboxes.cf", "/etc/postfix/mysql-virtual_mailboxes.cf")
-               shutil.copy("email-configs/mysql-virtual_email2email.cf", "/etc/postfix/mysql-virtual_email2email.cf")
-               shutil.copy("email-configs/main.cf", main)
-               shutil.copy("email-configs/master.cf",master)
-               shutil.copy("email-configs/dovecot.conf",davecot)
-               shutil.copy("email-configs/dovecot-sql.conf.ext",davecotmysql)
-           else:
-               shutil.copy("email-configs-one/mysql-virtual_domains.cf", "/etc/postfix/mysql-virtual_domains.cf")
-               shutil.copy("email-configs-one/mysql-virtual_forwardings.cf", "/etc/postfix/mysql-virtual_forwardings.cf")
-               shutil.copy("email-configs-one/mysql-virtual_mailboxes.cf", "/etc/postfix/mysql-virtual_mailboxes.cf")
-               shutil.copy("email-configs-one/mysql-virtual_email2email.cf", "/etc/postfix/mysql-virtual_email2email.cf")
-               shutil.copy("email-configs-one/main.cf", main)
-               shutil.copy("email-configs-one/master.cf", master)
-               shutil.copy("email-configs-one/dovecot.conf", davecot)
-               shutil.copy("email-configs-one/dovecot-sql.conf.ext", davecotmysql)
-
-
-
-           ######################################## Permissions
-
-           count = 0
-
-           while(1):
-
-               command = 'chmod o= /etc/postfix/mysql-virtual_domains.cf'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for mysql-virtual_domains.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for mysql-virtual_domains.cf. [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for mysql-virtual_domains.cf!")
-                   preFlightsChecks.stdOut("Permissions changed for mysql-virtual_domains.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'chmod o= /etc/postfix/mysql-virtual_forwardings.cf'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for mysql-virtual_forwardings.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for mysql-virtual_forwardings.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for mysql-virtual_forwardings.cf!")
-                   preFlightsChecks.stdOut("Permissions changed for mysql-virtual_forwardings.cf!")
-                   break
-
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'chmod o= /etc/postfix/mysql-virtual_mailboxes.cf'
-               cmd = shlex.split(command)
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for mysql-virtual_mailboxes.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for mysql-virtual_mailboxes.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for mysql-virtual_mailboxes.cf!")
-                   preFlightsChecks.stdOut("Permissions changed for mysql-virtual_mailboxes.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'chmod o= /etc/postfix/mysql-virtual_email2email.cf'
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for mysql-virtual_email2email.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for mysql-virtual_email2email.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for mysql-virtual_email2email.cf!")
-                   preFlightsChecks.stdOut("Permissions changed for mysql-virtual_email2email.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'chmod o= '+main
-               cmd = shlex.split(command)
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for /etc/postfix/main.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for /etc/postfix/main.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for /etc/postfix/main.cf!")
-                   preFlightsChecks.stdOut("Permissions changed for /etc/postfix/main.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'chmod o= '+master
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for /etc/postfix/master.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for /etc/postfix/master.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for /etc/postfix/master.cf!")
-                   preFlightsChecks.stdOut("Permissions changed for /etc/postfix/master.cf!")
-                   break
-
-
-           #######################################
-
-           count = 0
-
-           while(1):
-               command = 'chgrp postfix /etc/postfix/mysql-virtual_domains.cf'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change group for mysql-virtual_domains.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change group for mysql-virtual_domains.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Group changed for mysql-virtual_domains.cf!")
-                   preFlightsChecks.stdOut("Group changed for mysql-virtual_domains.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-               command = 'chgrp postfix /etc/postfix/mysql-virtual_forwardings.cf'
-               cmd = shlex.split(command)
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change group for mysql-virtual_forwardings.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change group for mysql-virtual_forwardings.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Group changed for mysql-virtual_forwardings.cf!")
-                   preFlightsChecks.stdOut("Group changed for mysql-virtual_forwardings.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-               command = 'chgrp postfix /etc/postfix/mysql-virtual_mailboxes.cf'
-               cmd = shlex.split(command)
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change group for mysql-virtual_mailboxes.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change group for mysql-virtual_mailboxes.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Group changed for mysql-virtual_mailboxes.cf!")
-                   preFlightsChecks.stdOut("Group changed for mysql-virtual_mailboxes.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'chgrp postfix /etc/postfix/mysql-virtual_email2email.cf'
-               cmd = shlex.split(command)
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change group for mysql-virtual_email2email.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change group for mysql-virtual_email2email.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Group changed for mysql-virtual_email2email.cf!")
-                   preFlightsChecks.stdOut("Group changed for mysql-virtual_email2email.cf!")
-                   break
-
-           ##
-
-           count = 0
-           while(1):
-               command = 'chgrp postfix '+main
-               cmd = shlex.split(command)
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change group for /etc/postfix/main.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change group for /etc/postfix/main.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Group changed for /etc/postfix/main.cf!")
-                   preFlightsChecks.stdOut("Group changed for /etc/postfix/main.cf!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'chgrp postfix ' + master
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change group for /etc/postfix/master.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change group for /etc/postfix/master.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Group changed for /etc/postfix/master.cf!")
-                   preFlightsChecks.stdOut("Group changed for /etc/postfix/master.cf!")
-                   break
-
-
-           ######################################## users and groups
-
-           count = 0
-
-           while(1):
-
-               command = 'groupadd -g 5000 vmail'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to add system group vmail, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to add system group vmail! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("System group vmail created successfully!")
-                   preFlightsChecks.stdOut("System group vmail created successfully!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'useradd -g vmail -u 5000 vmail -d /home/vmail -m'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to add system user vmail, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to add system user vmail! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("System user vmail created successfully!")
-                   preFlightsChecks.stdOut("System user vmail created successfully!")
-                   break
-
-
-           ######################################## Further configurations
-
-           #hostname = socket.gethostname()
-
-           ################################### Restart postix
-
-           count = 0
-
-           while(1):
-
-               command = 'systemctl enable postfix.service'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Trying to add Postfix to system startup, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Failed to enable Postfix to run at system restart you can manually do this using systemctl enable postfix.service! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("postfix.service successfully enabled!")
-                   preFlightsChecks.stdOut("postfix.service successfully enabled!")
-                   break
+            if self.distro == centos:
+
+                command = 'yum -y install http://cyberpanel.sh/gf-release-latest.gf.el7.noarch.rpm'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = 'yum remove postfix -y'
+            else:
+                command = 'apt-get -y remove postfix'
+
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            self.stdOut("Install dovecot - do the install")
+
+            if self.distro == centos:
+                command = 'yum install --enablerepo=gf-plus -y postfix3 postfix3-ldap postfix3-mysql postfix3-pcre'
+            else:
+                command = 'apt-get -y debconf-utils'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+                file_name = self.cwd + '/pf.unattend.text'
+                pf = open(file_name, 'w')
+                pf.write('postfix postfix/mailname string ' + str(socket.getfqdn() + '\n'))
+                pf.write('postfix postfix/main_mailer_type string "Internet Site"\n')
+                pf.close()
+                command = 'debconf-set-selections ' + file_name
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = 'apt-get -y install postfix'
+                # os.remove(file_name)
+
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
+
+            if self.distro == centos:
+                pass
+            else:
+                command = 'apt-get -y install dovecot-imapd dovecot-pop3d postfix-mysql'
+
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
             ##
 
-           count = 0
+            if self.distro == centos:
+                command = 'yum -y install dovecot dovecot-mysql'
+            else:
+                command = 'apt-get -y install dovecot-mysql'
 
-           while(1):
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
-               command = 'systemctl start  postfix.service'
+            if self.distro != centos:
+                command = 'curl https://repo.dovecot.org/DOVECOT-REPO-GPG | gpg --import'
+                subprocess.call(command, shell=True)
 
-               cmd = shlex.split(command)
+                command = 'gpg --export ED409DA1 > /etc/apt/trusted.gpg.d/dovecot.gpg'
+                subprocess.call(command, shell=True)
 
-               res = subprocess.call(cmd)
+                debPath = '/etc/apt/sources.list.d/dovecot.list'
+                writeToFile = open(debPath, 'w')
+                writeToFile.write('deb https://repo.dovecot.org/ce-2.3-latest/ubuntu/bionic bionic main\n')
+                writeToFile.close()
 
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Trying to start Postfix, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to start Postfix, you can not send email until you manually start Postfix using systemctl start postfix.service! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("postfix.service started successfully!")
-                   preFlightsChecks.stdOut("postfix.service started successfully!")
-                   break
+                try:
+                    command = 'apt update -y'
+                    subprocess.call(command, shell=True)
+                except:
+                    pass
 
-           ######################################## Permissions
+                try:
+                    command = 'DEBIAN_FRONTEND=noninteractive DEBIAN_PRIORITY=critical sudo apt-get -q -y -o "Dpkg::Options::=--force-confdef" -o "Dpkg::Options::=--force-confold" --only-upgrade install dovecot-mysql -y'
+                    subprocess.call(command, shell=True)
 
-           count = 0
+                    command = 'dpkg --configure -a'
+                    subprocess.call(command, shell=True)
 
-           while(1):
+                    command = 'apt --fix-broken install -y'
+                    subprocess.call(command, shell=True)
 
-               command = 'chgrp dovecot /etc/dovecot/dovecot-sql.conf.ext'
+                    command = 'DEBIAN_FRONTEND=noninteractive DEBIAN_PRIORITY=critical sudo apt-get -q -y -o "Dpkg::Options::=--force-confdef" -o "Dpkg::Options::=--force-confold" --only-upgrade install dovecot-mysql -y'
+                    subprocess.call(command, shell=True)
+                except:
+                    pass
 
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change group for /etc/dovecot/dovecot-sql.conf.ext, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change group for /etc/dovecot/dovecot-sql.conf.ext! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Group changed for /etc/dovecot/dovecot-sql.conf.ext!")
-                   preFlightsChecks.stdOut("Group changed for /etc/dovecot/dovecot-sql.conf.ext!")
-                   break
-           ##
-
-
-           count = 0
-
-           while(1):
-
-               command = 'chmod o= /etc/dovecot/dovecot-sql.conf.ext'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for /etc/dovecot/dovecot-sql.conf.ext, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for /etc/dovecot/dovecot-sql.conf.ext! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for /etc/dovecot/dovecot-sql.conf.ext!")
-                   preFlightsChecks.stdOut("Permissions changed for /etc/dovecot/dovecot-sql.conf.ext!")
-                   break
-
-           ################################### Restart davecot
-
-           count = 0
-
-
-           while(1):
-
-               command = 'systemctl enable dovecot.service'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to enable dovecot.service, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to enable dovecot.service! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("dovecot.service successfully enabled!")
-                   preFlightsChecks.stdOut("dovecot.service successfully enabled!")
-                   break
-
-
-           ##
-
-
-           count = 0
-
-
-           while(1):
-               command = 'systemctl start dovecot.service'
-               cmd = shlex.split(command)
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to start dovecot.service, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to start dovecot.service! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("dovecot.service successfully started!")
-                   preFlightsChecks.stdOut("dovecot.service successfully started!")
-                   break
-
-           ##
-
-           count = 0
-
-           while(1):
-
-               command = 'systemctl restart  postfix.service'
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to restart postfix.service, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to restart postfix.service! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("dovecot.service successfully restarted!")
-                   preFlightsChecks.stdOut("postfix.service successfully restarted!")
-                   break
-
-
-           ## chaging permissions for main.cf
-
-           count = 0
-
-           while(1):
-
-               command = "chmod 755 "+main
-
-               cmd = shlex.split(command)
-
-               res = subprocess.call(cmd)
-
-               if res == 1:
-                   count = count + 1
-                   preFlightsChecks.stdOut("Unable to change permissions for /etc/postfix/main.cf, trying again, try number: " + str(count))
-                   if count == 3:
-                       logging.InstallLog.writeToFile("Unable to change permissions for /etc/postfix/main.cf! [setup_postfix_davecot_config]")
-                       break
-               else:
-                   logging.InstallLog.writeToFile("Permissions changed for /etc/postfix/main.cf!")
-                   preFlightsChecks.stdOut("Permissions changed for /etc/postfix/main.cf!")
-                   break
-
-           logging.InstallLog.writeToFile("Postfix and Dovecot configured")
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setup_postfix_davecot_config]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setup_postfix_davecot_config]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [install_postfix_davecot]")
             return 0
 
         return 1
 
+    def setup_email_Passwords(self, mysqlPassword, mysql):
+        try:
+
+            logging.InstallLog.writeToFile("Setting up authentication for Postfix and Dovecot...")
+
+            os.chdir(self.cwd)
+
+            if mysql == 'Two':
+                mysql_virtual_domains = "email-configs/mysql-virtual_domains.cf"
+                mysql_virtual_forwardings = "email-configs/mysql-virtual_forwardings.cf"
+                mysql_virtual_mailboxes = "email-configs/mysql-virtual_mailboxes.cf"
+                mysql_virtual_email2email = "email-configs/mysql-virtual_email2email.cf"
+                davecotmysql = "email-configs/dovecot-sql.conf.ext"
+            else:
+                mysql_virtual_domains = "email-configs-one/mysql-virtual_domains.cf"
+                mysql_virtual_forwardings = "email-configs-one/mysql-virtual_forwardings.cf"
+                mysql_virtual_mailboxes = "email-configs-one/mysql-virtual_mailboxes.cf"
+                mysql_virtual_email2email = "email-configs-one/mysql-virtual_email2email.cf"
+                davecotmysql = "email-configs-one/dovecot-sql.conf.ext"
+
+                ### update password:
+
+            data = open(davecotmysql, "r").readlines()
+
+            writeDataToFile = open(davecotmysql, "w")
+
+            if mysql == 'Two':
+                dataWritten = "connect = host=127.0.0.1 dbname=cyberpanel user=cyberpanel password=" + mysqlPassword + " port=3307\n"
+            else:
+                dataWritten = "connect = host=localhost dbname=cyberpanel user=cyberpanel password=" + mysqlPassword + " port=3306\n"
+
+            for items in data:
+                if items.find("connect") > -1:
+                    writeDataToFile.writelines(dataWritten)
+                else:
+                    writeDataToFile.writelines(items)
+
+            # if self.distro == ubuntu:
+            #    os.fchmod(writeDataToFile.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+
+            writeDataToFile.close()
+
+            ### update password:
+
+            data = open(mysql_virtual_domains, "r").readlines()
+
+            writeDataToFile = open(mysql_virtual_domains, "w")
+
+            dataWritten = "password = " + mysqlPassword + "\n"
+
+            for items in data:
+                if items.find("password") > -1:
+                    writeDataToFile.writelines(dataWritten)
+                else:
+                    writeDataToFile.writelines(items)
+
+            # if self.distro == ubuntu:
+            #    os.fchmod(writeDataToFile.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+
+            writeDataToFile.close()
+
+            ### update password:
+
+            data = open(mysql_virtual_forwardings, "r").readlines()
+
+            writeDataToFile = open(mysql_virtual_forwardings, "w")
+
+            dataWritten = "password = " + mysqlPassword + "\n"
+
+            for items in data:
+                if items.find("password") > -1:
+                    writeDataToFile.writelines(dataWritten)
+                else:
+                    writeDataToFile.writelines(items)
+
+            # if self.distro == ubuntu:
+            #    os.fchmod(writeDataToFile.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+
+            writeDataToFile.close()
+
+            ### update password:
+
+            data = open(mysql_virtual_mailboxes, "r").readlines()
+
+            writeDataToFile = open(mysql_virtual_mailboxes, "w")
+
+            dataWritten = "password = " + mysqlPassword + "\n"
+
+            for items in data:
+                if items.find("password") > -1:
+                    writeDataToFile.writelines(dataWritten)
+                else:
+                    writeDataToFile.writelines(items)
+
+            # if self.distro == ubuntu:
+            #    os.fchmod(writeDataToFile.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+
+            writeDataToFile.close()
+
+            ### update password:
+
+            data = open(mysql_virtual_email2email, "r").readlines()
+
+            writeDataToFile = open(mysql_virtual_email2email, "w")
+
+            dataWritten = "password = " + mysqlPassword + "\n"
+
+            for items in data:
+                if items.find("password") > -1:
+                    writeDataToFile.writelines(dataWritten)
+                else:
+                    writeDataToFile.writelines(items)
+
+            # if self.distro == ubuntu:
+            #    os.fchmod(writeDataToFile.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+
+            writeDataToFile.close()
+
+            logging.InstallLog.writeToFile("Authentication for Postfix and Dovecot set.")
+
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR]' + str(msg) + " [setup_email_Passwords]")
+            return 0
+
+        return 1
+
+    def centos_lib_dir_to_ubuntu(self, filename, old, new):
+        try:
+            fd = open(filename, 'r')
+            lines = fd.readlines()
+            fd.close()
+            fd = open(filename, 'w')
+            centos_prefix = old
+            ubuntu_prefix = new
+            for line in lines:
+                index = line.find(centos_prefix)
+                if index != -1:
+                    line = line[:index] + ubuntu_prefix + line[index + len(centos_prefix):]
+                fd.write(line)
+            fd.close()
+        except IOError as err:
+            self.stdOut("[ERROR] Error converting: " + filename + " from centos defaults to ubuntu defaults: " + str(err), 1,
+                        1, os.EX_OSERR)
+
+    def setup_postfix_davecot_config(self, mysql):
+        try:
+            logging.InstallLog.writeToFile("Configuring postfix and dovecot...")
+
+            os.chdir(self.cwd)
+
+            mysql_virtual_domains = "/etc/postfix/mysql-virtual_domains.cf"
+            mysql_virtual_forwardings = "/etc/postfix/mysql-virtual_forwardings.cf"
+            mysql_virtual_mailboxes = "/etc/postfix/mysql-virtual_mailboxes.cf"
+            mysql_virtual_email2email = "/etc/postfix/mysql-virtual_email2email.cf"
+            main = "/etc/postfix/main.cf"
+            master = "/etc/postfix/master.cf"
+            davecot = "/etc/dovecot/dovecot.conf"
+            davecotmysql = "/etc/dovecot/dovecot-sql.conf.ext"
+
+            if os.path.exists(mysql_virtual_domains):
+                os.remove(mysql_virtual_domains)
+
+            if os.path.exists(mysql_virtual_forwardings):
+                os.remove(mysql_virtual_forwardings)
+
+            if os.path.exists(mysql_virtual_mailboxes):
+                os.remove(mysql_virtual_mailboxes)
+
+            if os.path.exists(mysql_virtual_email2email):
+                os.remove(mysql_virtual_email2email)
+
+            if os.path.exists(main):
+                os.remove(main)
+
+            if os.path.exists(master):
+                os.remove(master)
+
+            if os.path.exists(davecot):
+                os.remove(davecot)
+
+            if os.path.exists(davecotmysql):
+                os.remove(davecotmysql)
+
+            ###############Getting SSL
+
+            command = 'openssl req -newkey rsa:1024 -new -nodes -x509 -days 3650 -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com" -keyout /etc/postfix/key.pem -out /etc/postfix/cert.pem'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'openssl req -newkey rsa:1024 -new -nodes -x509 -days 3650 -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com" -keyout /etc/dovecot/key.pem -out /etc/dovecot/cert.pem'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            # Cleanup config files for ubuntu
+            if self.distro == ubuntu:
+                preFlightsChecks.stdOut("Cleanup postfix/dovecot config files", 1)
+                if mysql == 'Two':
+                    self.centos_lib_dir_to_ubuntu("email-configs/master.cf", "/usr/libexec/", "/usr/lib/")
+                    self.centos_lib_dir_to_ubuntu("email-configs/main.cf", "/usr/libexec/postfix",
+                                                  "/usr/lib/postfix/sbin")
+                else:
+                    self.centos_lib_dir_to_ubuntu("email-configs-one/master.cf", "/usr/libexec/", "/usr/lib/")
+                    self.centos_lib_dir_to_ubuntu("email-configs-one/main.cf", "/usr/libexec/postfix",
+                                                  "/usr/lib/postfix/sbin")
+
+            ########### Copy config files
+
+            if mysql == 'Two':
+                shutil.copy("email-configs/mysql-virtual_domains.cf", "/etc/postfix/mysql-virtual_domains.cf")
+                shutil.copy("email-configs/mysql-virtual_forwardings.cf", "/etc/postfix/mysql-virtual_forwardings.cf")
+                shutil.copy("email-configs/mysql-virtual_mailboxes.cf", "/etc/postfix/mysql-virtual_mailboxes.cf")
+                shutil.copy("email-configs/mysql-virtual_email2email.cf", "/etc/postfix/mysql-virtual_email2email.cf")
+                shutil.copy("email-configs/main.cf", main)
+                shutil.copy("email-configs/master.cf", master)
+                shutil.copy("email-configs/dovecot.conf", davecot)
+                shutil.copy("email-configs/dovecot-sql.conf.ext", davecotmysql)
+            else:
+                shutil.copy("email-configs-one/mysql-virtual_domains.cf", "/etc/postfix/mysql-virtual_domains.cf")
+                shutil.copy("email-configs-one/mysql-virtual_forwardings.cf",
+                            "/etc/postfix/mysql-virtual_forwardings.cf")
+                shutil.copy("email-configs-one/mysql-virtual_mailboxes.cf", "/etc/postfix/mysql-virtual_mailboxes.cf")
+                shutil.copy("email-configs-one/mysql-virtual_email2email.cf",
+                            "/etc/postfix/mysql-virtual_email2email.cf")
+                shutil.copy("email-configs-one/main.cf", main)
+                shutil.copy("email-configs-one/master.cf", master)
+                shutil.copy("email-configs-one/dovecot.conf", davecot)
+                shutil.copy("email-configs-one/dovecot-sql.conf.ext", davecotmysql)
+
+            ######################################## Permissions
+
+            command = 'chmod o= /etc/postfix/mysql-virtual_domains.cf'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chmod o= /etc/postfix/mysql-virtual_forwardings.cf'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chmod o= /etc/postfix/mysql-virtual_mailboxes.cf'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chmod o= /etc/postfix/mysql-virtual_email2email.cf'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chmod o= ' + main
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chmod o= ' + master
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            #######################################
+
+            command = 'chgrp postfix /etc/postfix/mysql-virtual_domains.cf'
+
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chgrp postfix /etc/postfix/mysql-virtual_forwardings.cf'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+            ##
+
+            command = 'chgrp postfix /etc/postfix/mysql-virtual_mailboxes.cf'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chgrp postfix /etc/postfix/mysql-virtual_email2email.cf'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chgrp postfix ' + main
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chgrp postfix ' + master
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ######################################## users and groups
+
+            command = 'groupadd -g 5000 vmail'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'useradd -g vmail -u 5000 vmail -d /home/vmail -m'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ######################################## Further configurations
+
+            # hostname = socket.gethostname()
+
+            ################################### Restart postix
+
+            command = 'systemctl enable postfix.service'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'systemctl start postfix.service'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ######################################## Permissions
+
+            command = 'chgrp dovecot /etc/dovecot/dovecot-sql.conf.ext'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'chmod o= /etc/dovecot/dovecot-sql.conf.ext'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ################################### Restart davecot
+
+            command = 'systemctl enable dovecot.service'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'systemctl start dovecot.service'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            command = 'systemctl restart  postfix.service'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ## chaging permissions for main.cf
+
+            command = "chmod 755 " + main
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            if self.distro == ubuntu:
+                command = "mkdir -p /etc/pki/dovecot/private/"
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = "mkdir -p /etc/pki/dovecot/certs/"
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = "mkdir -p /etc/opendkim/keys/"
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = "sed -i 's/auth_mechanisms = plain/#auth_mechanisms = plain/g' /etc/dovecot/conf.d/10-auth.conf"
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                ## Ubuntu 18.10 ssl_dh for dovecot 2.3.2.1
+
+                if get_Ubuntu_release() == 18.10:
+                    dovecotConf = '/etc/dovecot/dovecot.conf'
+
+                    data = open(dovecotConf, 'r').readlines()
+                    writeToFile = open(dovecotConf, 'w')
+                    for items in data:
+                        if items.find('ssl_key = <key.pem') > -1:
+                            writeToFile.writelines(items)
+                            writeToFile.writelines('ssl_dh = </usr/share/dovecot/dh.pem\n')
+                        else:
+                            writeToFile.writelines(items)
+                    writeToFile.close()
+
+                command = "systemctl restart dovecot"
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            logging.InstallLog.writeToFile("Postfix and Dovecot configured")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [setup_postfix_davecot_config]")
+            return 0
+
+        return 1
 
     def downoad_and_install_raindloop(self):
         try:
-            ###########
-            count = 0
-
-            while(1):
-                command = 'chown -R nobody:nobody /usr/local/lscp/cyberpanel/'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to change owner for /usr/local/lscp/cyberpanel/, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Failed to change owner for /usr/local/lscp/cyberpanel/, but installer can continue! [downoad_and_install_raindloop]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Owner changed for /usr/local/lscp/cyberpanel/!")
-                    preFlightsChecks.stdOut("Owner changed for /usr/local/lscp/cyberpanel/!")
-                    break
             #######
 
+            if not os.path.exists("/usr/local/CyberCP/public"):
+                os.mkdir("/usr/local/CyberCP/public")
 
-            os.chdir("/usr/local/lscp/cyberpanel")
+            if os.path.exists("/usr/local/CyberCP/public/rainloop"):
+                return 0
 
-            count = 1
+            os.chdir("/usr/local/CyberCP/public")
 
-            while(1):
-                command = 'wget https://www.rainloop.net/repository/webmail/rainloop-community-latest.zip'
-
-                cmd = shlex.split(command)
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to download Rainloop, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to download Rainloop, installation can continue but you will not be able to send emails! [downoad_and_install_raindloop]")
-                        return
-                else:
-                    logging.InstallLog.writeToFile("Rainloop Downloaded!")
-                    preFlightsChecks.stdOut("Rainloop Downloaded!")
-                    break
+            command = 'wget https://www.rainloop.net/repository/webmail/rainloop-community-latest.zip'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
             #############
 
-            count = 0
-
-            while(1):
-                command = 'unzip rainloop-community-latest.zip -d /usr/local/lscp/cyberpanel/rainloop'
-
-                cmd = shlex.split(command)
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to unzip rainloop, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("We could not unzip Rainloop, so you will not be able to send emails! [downoad_and_install_raindloop]")
-                        return
-                else:
-                    logging.InstallLog.writeToFile("Rainloop successfully unzipped!")
-                    preFlightsChecks.stdOut("Rainloop successfully unzipped!")
-                    break
+            command = 'unzip rainloop-community-latest.zip -d /usr/local/CyberCP/public/rainloop'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 1, os.EX_OSERR)
 
             os.remove("rainloop-community-latest.zip")
 
             #######
 
-            os.chdir("/usr/local/lscp/cyberpanel/rainloop")
+            os.chdir("/usr/local/CyberCP/public/rainloop")
 
-            count = 0
-
-            while(1):
-                command = 'find . -type d -exec chmod 755 {} \;'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to change permissions for Rainloop, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Failed to change permissions for Rainloop, so you will not be able to send emails!! [downoad_and_install_raindloop]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Rainloop permissions changed!")
-                    print(
-                        "[" + time.strftime("%I-%M-%S-%a-%b-%Y") + "] " + "Rainloop permissions changed!")
-                    break
+            command = 'find . -type d -exec chmod 755 {} \;'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             #############
 
-            count = 0
+            command = 'find . -type f -exec chmod 644 {} \;'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            while(1):
-
-                command = 'find . -type f -exec chmod 644 {} \;'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to change permissions for Rainloop, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Failed to change permissions for Rainloop, so you will not be able to send emails!! [downoad_and_install_raindloop]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Rainloop permissions changed!")
-                    preFlightsChecks.stdOut("Rainloop permissions changed!")
-                    break
             ######
 
-            count = 0
+            command = "mkdir -p /usr/local/lscp/cyberpanel/rainloop/data"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            while(1):
+            ### Enable sub-folders
 
-                command = 'chown -R nobody:nobody .'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+            command = "mkdir -p /usr/local/lscp/cyberpanel/rainloop/data/_data_/_default_/configs/"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to change owner for Rainloop, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Failed to change owner for Rainloop, so you will not be able to send emails!! [downoad_and_install_raindloop]")
-                        break
+            labsPath = '/usr/local/lscp/cyberpanel/rainloop/data/_data_/_default_/configs/application.ini'
+
+            labsData = """[labs]
+imap_folder_list_limit = 0
+"""
+
+            writeToFile = open(labsPath, 'w')
+            writeToFile.write(labsData)
+            writeToFile.close()
+
+            iPath = os.listdir('/usr/local/CyberCP/public/rainloop/rainloop/v/')
+
+            path = "/usr/local/CyberCP/public/rainloop/rainloop/v/%s/include.php" % (iPath[0])
+
+            data = open(path, 'r').readlines()
+            writeToFile = open(path, 'w')
+
+            for items in data:
+                if items.find("$sCustomDataPath = '';") > -1:
+                    writeToFile.writelines(
+                        "			$sCustomDataPath = '/usr/local/lscp/cyberpanel/rainloop/data';\n")
                 else:
-                    logging.InstallLog.writeToFile("Rainloop owner changed!")
-                    preFlightsChecks.stdOut("Rainloop owner changed!")
-                    break
+                    writeToFile.writelines(items)
 
+            writeToFile.close()
 
-
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [downoad_and_install_rainloop]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [downoad_and_install_rainloop]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [downoad_and_install_rainloop]")
             return 0
 
         return 1
 
     ###################################################### Email setup ends!
 
-
     def reStartLiteSpeed(self):
+        command = '%sbin/lswsctrl restart' % (self.server_root_path)
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+    def removeUfw(self):
         try:
-            count = 0
-            while(1):
-                cmd = []
-
-                cmd.append(self.server_root_path+"bin/lswsctrl")
-                cmd.append("restart")
-
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to restart OpenLiteSpeed, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to restart OpenLiteSpeed! [reStartLiteSpeed]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("OpenLiteSpeed restarted Successfully!")
-                    preFlightsChecks.stdOut("OpenLiteSpeed restarted Successfully!")
-                    break
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [reStartLiteSpeed]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [reStartLiteSpeed]")
-            return 0
-        return 1
-
+            preFlightsChecks.stdOut("Checking to see if ufw firewall is installed (will be removed)", 1)
+            status = subprocess.check_output(shlex.split('ufw status'))
+            preFlightsChecks.stdOut("ufw current status: " + status + "...will be removed")
+        except BaseException, msg:
+            preFlightsChecks.stdOut("[ERROR] Expected access to ufw not available, do not need to remove it", 1)
+            return True
+        try:
+            preFlightsChecks.call('apt-get -y remove ufw', self.distro, '[remove_ufw]', 'Remove ufw firewall ' +
+                                  '(using firewalld)', 1, 0, os.EX_OSERR)
+        except:
+            pass
+        return True
 
     def installFirewalld(self):
-        try:
+        if self.distro == ubuntu:
+            self.removeUfw()
 
+        try:
             preFlightsChecks.stdOut("Enabling Firewall!")
 
-            count = 0
-
-            while(1):
+            if self.distro == ubuntu:
+                command = 'apt-get -y install firewalld'
+            else:
                 command = 'yum -y install firewalld'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to install FirewallD, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install FirewallD, funtions related to Firewall will not work! [installFirewalld]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("FirewallD successfully installed!")
-                    preFlightsChecks.stdOut("FirewallD successfully installed!")
-                    break
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             ######
-            command = 'systemctl restart dbus'
-            cmd = shlex.split(command)
-            subprocess.call(cmd)
+            if self.distro == centos:
+                # Not available in ubuntu
+                command = 'systemctl restart dbus'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
+            command = 'systemctl restart systemd-logind'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            count = 0
-
-            while(1):
-                command = 'systemctl start firewalld'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to start FirewallD, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to start FirewallD, you can manually start it later using systemctl start firewalld! [installFirewalld]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("FirewallD successfully started!")
-                    preFlightsChecks.stdOut("FirewallD successfully started!")
-                    break
-
+            command = 'systemctl start firewalld'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             ##########
 
-            count = 0
+            command = 'systemctl enable firewalld'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            while(1):
-
-                command = 'systemctl enable firewalld'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to enable FirewallD at system startup, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("FirewallD may not start after restart, you need to manually run systemctl enable firewalld ! [installFirewalld]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("FirewallD successfully enabled on system startup!")
-                    preFlightsChecks.stdOut("FirewallD successfully enabled on system startup!")
-                    break
-
-
-            FirewallUtilities.addRule("tcp","8090")
+            FirewallUtilities.addRule("tcp", "8090")
             FirewallUtilities.addRule("tcp", "80")
             FirewallUtilities.addRule("tcp", "443")
             FirewallUtilities.addRule("tcp", "21")
@@ -2106,6 +1385,7 @@ class preFlightsChecks:
             FirewallUtilities.addRule("tcp", "993")
             FirewallUtilities.addRule("udp", "53")
             FirewallUtilities.addRule("tcp", "53")
+            FirewallUtilities.addRule("udp", "443")
             FirewallUtilities.addRule("tcp", "40110-40210")
 
             logging.InstallLog.writeToFile("FirewallD installed and configured!")
@@ -2113,15 +1393,209 @@ class preFlightsChecks:
 
 
         except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installFirewalld]")
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [installFirewalld]")
             return 0
         except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installFirewalld]")
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [installFirewalld]")
             return 0
 
         return 1
 
     ## from here
+
+    def installLSCPD(self):
+        try:
+
+            logging.InstallLog.writeToFile("Starting LSCPD installation..")
+
+            os.chdir(self.cwd)
+
+            if self.distro == ubuntu:
+                command = "apt-get -y install gcc g++ make autoconf rcs"
+            else:
+                command = 'yum -y install gcc gcc-c++ make autoconf glibc rcs'
+
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            if self.distro == ubuntu:
+                command = "apt-get -y install libpcre3 libpcre3-dev openssl libexpat1 libexpat1-dev libgeoip-dev" \
+                          " zlib1g zlib1g-dev libudns-dev whichman curl"
+            else:
+                command = 'yum -y install pcre-devel openssl-devel expat-devel geoip-devel zlib-devel udns-devel' \
+                          ' which curl'
+
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            command = 'tar zxf lscp.tar.gz -C /usr/local/'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            command = 'openssl req -newkey rsa:1024 -new -nodes -x509 -days 3650 -subj "/C=US/ST=Denial/L=Springfield/O=Dis/CN=www.example.com" -keyout /usr/local/lscp/conf/key.pem -out /usr/local/lscp/conf/cert.pem'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            try:
+                os.remove("/usr/local/lscp/fcgi-bin/lsphp")
+                shutil.copy("/usr/local/lsws/lsphp70/bin/lsphp", "/usr/local/lscp/fcgi-bin/lsphp")
+            except:
+                pass
+
+            if self.distro == centos:
+                command = 'adduser lscpd -M -d /usr/local/lscp'
+            else:
+                command = 'useradd lscpd -M -d /usr/local/lscp'
+
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            if self.distro == centos:
+                command = 'groupadd lscpd'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+                # Added group in useradd for Ubuntu
+
+            command = 'usermod -a -G lscpd lscpd'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            command = 'usermod -a -G lsadm lscpd'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+            try:
+                os.mkdir('/usr/local/lscp/cyberpanel')
+            except:
+                pass
+            try:
+                os.mkdir('/usr/local/lscp/cyberpanel/logs')
+            except:
+                pass
+
+            # self.setupComodoRules()
+            self.setupPort()
+            self.setupPythonWSGI()
+
+            logging.InstallLog.writeToFile("LSCPD successfully installed!")
+
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [installLSCPD]")
+
+    def setupComodoRules(self):
+        try:
+            os.chdir(self.cwd)
+
+            extractLocation = "/usr/local/lscp/modsec"
+
+            command = "mkdir -p /usr/local/lscp/modsec"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            try:
+                if os.path.exists('comodo.tar.gz'):
+                    os.remove('comodo.tar.gz')
+            except:
+                pass
+
+            command = "wget https://cyberpanel.net/modsec/comodo.tar.gz"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            command = "tar -zxf comodo.tar.gz -C /usr/local/lscp/modsec"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ###
+
+            modsecConfPath = "/usr/local/lscp/conf/modsec.conf"
+
+            modsecConfig = """
+        module mod_security {
+        ls_enabled 0
+        modsecurity  on
+        modsecurity_rules `
+        SecDebugLogLevel 0
+        SecDebugLog /usr/local/lscp/logs/modsec.log
+        SecAuditEngine on
+        SecAuditLogRelevantStatus "^(?:5|4(?!04))"
+        SecAuditLogParts AFH
+        SecAuditLogType Serial
+        SecAuditLog /usr/local/lscp/logs/auditmodsec.log
+        SecRuleEngine Off
+        `
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/modsecurity.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/00_Init_Initialization.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/01_Init_AppsInitialization.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/02_Global_Generic.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/03_Global_Agents.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/04_Global_Domains.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/05_Global_Backdoor.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/06_XSS_XSS.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/07_Global_Other.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/08_Bruteforce_Bruteforce.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/09_HTTP_HTTP.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/10_HTTP_HTTPDoS.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/11_HTTP_Protocol.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/12_HTTP_Request.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/13_Outgoing_FilterGen.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/14_Outgoing_FilterASP.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/15_Outgoing_FilterPHP.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/16_Outgoing_FilterSQL.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/17_Outgoing_FilterOther.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/18_Outgoing_FilterInFrame.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/19_Outgoing_FiltersEnd.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/20_PHP_PHPGen.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/21_SQL_SQLi.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/22_Apps_Joomla.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/23_Apps_JComponent.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/24_Apps_WordPress.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/25_Apps_WPPlugin.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/26_Apps_WHMCS.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/27_Apps_Drupal.conf
+            modsecurity_rules_file /usr/local/lscp/modsec/comodo/28_Apps_OtherApps.conf
+        }
+        """
+
+            writeToFile = open(modsecConfPath, 'w')
+            writeToFile.write(modsecConfig)
+            writeToFile.close()
+
+            ###
+
+            command = "chown -R lscpd:lscpd /usr/local/lscp/modsec"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            return 1
+
+        except BaseException, msg:
+            logging.InstallLog.writeToFile("[ERROR]" + str(msg))
+            return 0
+
+    def setupPort(self):
+        try:
+            ###
+            bindConfPath = "/usr/local/lscp/conf/bind.conf"
+
+            writeToFile = open(bindConfPath, 'w')
+            writeToFile.write("*:" + self.port)
+            writeToFile.close()
+
+        except:
+            return 0
+
+    def setupPythonWSGI(self):
+        try:
+
+            command = "wget http://www.litespeedtech.com/packages/lsapi/wsgi-lsapi-1.4.tgz"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            command = "tar xf wsgi-lsapi-1.4.tgz"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            os.chdir("wsgi-lsapi-1.4")
+
+            command = "python ./configure.py"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            command = "make"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            command = "cp lswsgi /usr/local/CyberCP/bin/"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            os.chdir(self.cwd)
+
+        except:
+            return 0
 
     def setupLSCPDDaemon(self):
         try:
@@ -2131,81 +1605,57 @@ class preFlightsChecks:
 
             os.chdir(self.cwd)
 
-            shutil.copy("lscpd/lscpd.service","/etc/systemd/system/lscpd.service")
-            shutil.copy("lscpd/lscpdctrl","/usr/local/lscp/bin/lscpdctrl")
+            shutil.copy("lscpd/lscpd.service", "/etc/systemd/system/lscpd.service")
+            shutil.copy("lscpd/lscpdctrl", "/usr/local/lscp/bin/lscpdctrl")
 
             ##
 
+            command = 'chmod +x /usr/local/lscp/bin/lscpdctrl'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+
+            path = "/usr/local/lscpd/admin/"
+
+            command = "mkdir -p " + path
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            path = "/usr/local/CyberCP/conf/"
+            command = "mkdir -p " + path
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            path = "/usr/local/CyberCP/conf/token_env"
+            writeToFile = open(path, "w")
+            writeToFile.write("abc\n")
+            writeToFile.close()
+
+            command = "chmod 600 " + path
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
+            command = 'systemctl enable lscpd.service'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            ##
             count = 0
 
-            while(1):
-                command = 'chmod +x /usr/local/lscp/bin/lscpdctrl'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to change permissions for /usr/local/lscp/bin/lscpdctrl, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to change permissions for /usr/local/lscp/bin/lscpdctrl [setupLSCPDDaemon]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Successfully changed permissions for /usr/local/lscp/bin/lscpdctrl!")
-                    preFlightsChecks.stdOut("Successfully changed permissions for /usr/local/lscp/bin/lscpdctrl!")
-                    break
+            # In Ubuntu, the library that lscpd looks for is libpcre.so.1, but the one it installs is libpcre.so.3...
+            if self.distro == ubuntu:
+                command = 'ln -s /lib/x86_64-linux-gnu/libpcre.so.3 /lib/x86_64-linux-gnu/libpcre.so.1'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             ##
 
-            count = 1
-
-            while(1):
-
-                command = 'systemctl enable lscpd.service'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to enable LSCPD on system startup, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to change permissions for /usr/local/lscp/bin/lscpdctrl, you can do it manually using  systemctl enable lscpd.service [setupLSCPDDaemon]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("LSCPD Successfully enabled at system startup!")
-                    preFlightsChecks.stdOut("LSCPD Successfully enabled at system startup!")
-                    break
-
-            ##
-
-            count = 0
-
-            while(1):
-
-                command = 'systemctl start lscpd'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Unable to start LSCPD, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to start LSCPD! [setupLSCPDDaemon]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("LSCPD successfully started!")
-                    preFlightsChecks.stdOut("LSCPD successfully started!")
-                    break
+            command = 'systemctl start lscpd'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             preFlightsChecks.stdOut("LSCPD Daemon Set!")
 
             logging.InstallLog.writeToFile("LSCPD Daemon Set!")
 
 
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setupLSCPDDaemon]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setupLSCPDDaemon]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [setupLSCPDDaemon]")
             return 0
 
         return 1
@@ -2214,64 +1664,27 @@ class preFlightsChecks:
 
         try:
             ## first install crontab
-            file = open("installLogs.txt", 'a')
-            count = 0
-            while(1):
 
+            if self.distro == centos:
                 command = 'yum install cronie -y'
+            else:
+                command = 'apt-get -y install cron'
 
-                cmd = shlex.split(command)
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-                res = subprocess.call(cmd, stdout=file)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to install cronie, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install cronie, cron jobs will not work. [setup_cron]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Cronie successfully installed!")
-                    preFlightsChecks.stdOut("Cronie successfully installed!")
-                    break
-
-
-            count = 0
-
-            while(1):
-
+            if self.distro == centos:
                 command = 'systemctl enable crond'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd, stdout=file)
+            else:
+                command = 'systemctl enable cron'
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to enable cronie on system startup, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("We are not able to enable cron jobs at system startup, you can manually run systemctl enable crond. [setup_cron]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Cronie successfully enabled at system startup!")
-                    preFlightsChecks.stdOut("Cronie successfully enabled at system startup!")
-                    break
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            count = 0
-
-            while(1):
+            if self.distro == centos:
                 command = 'systemctl start crond'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd, stdout=file)
+            else:
+                command = 'systemctl start cron'
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to start crond, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("We are not able to start crond, you can manually run systemctl start crond. [setup_cron]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Crond successfully started!")
-                    preFlightsChecks.stdOut("Crond successfully started!")
-                    break
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             ##
 
@@ -2279,176 +1692,75 @@ class preFlightsChecks:
             cronFile.writelines("0 * * * * root python /usr/local/CyberCP/plogical/findBWUsage.py" + "\n")
             cronFile.writelines("0 * * * * root /usr/local/CyberCP/postfixSenderPolicy/client.py hourlyCleanup" + "\n")
             cronFile.writelines("0 0 1 * * root /usr/local/CyberCP/postfixSenderPolicy/client.py monthlyCleanup" + "\n")
+            cronFile.writelines("0 2 * * * root /usr/local/CyberCP/plogical/upgradeCritical.py" + "\n")
+            cronFile.writelines("0 2 * * * root /usr/local/CyberCP/bin/python2 /usr/local/CyberCP/plogical/renew.py\n")
             cronFile.close()
 
             command = 'chmod +x /usr/local/CyberCP/plogical/findBWUsage.py'
-            cmd = shlex.split(command)
-            res = subprocess.call(cmd, stdout=file)
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            if res == 1:
-                logging.InstallLog.writeToFile("1427 [setup_cron]")
-            else:
-                pass
+            command = 'chmod +x /usr/local/CyberCP/plogical/upgradeCritical.py'
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             command = 'chmod +x /usr/local/CyberCP/postfixSenderPolicy/client.py'
-            cmd = shlex.split(command)
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            res = subprocess.call(cmd, stdout=file)
-
-            if res == 1:
-                logging.InstallLog.writeToFile("1428 [setup_cron]")
-            else:
-                pass
-
-            count = 0
-
-            while(1):
+            if self.distro == centos:
                 command = 'systemctl restart crond.service'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd, stdout=file)
+            else:
+                command = 'systemctl restart cron.service'
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to restart crond, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("We are not able to restart crond, you can manually run systemctl restart crond. [setup_cron]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Crond successfully restarted!")
-                    preFlightsChecks.stdOut("Crond successfully restarted!")
-                    break
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            file.close()
-
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setup_cron]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [setup_cron]")
             return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setup_cron]")
-            return 0
-
-        return 1
 
     def install_default_keys(self):
         try:
-            count = 0
-
             path = "/root/.ssh"
 
             if not os.path.exists(path):
                 os.mkdir(path)
 
-            while (1):
+            command = "ssh-keygen -f /root/.ssh/cyberpanel -t rsa -N ''"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-                command = "ssh-keygen -f /root/.ssh/cyberpanel -t rsa -N ''"
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to setup default SSH keys, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to setup default SSH keys. [install_default_keys]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Succcessfully created default SSH keys!")
-                    preFlightsChecks.stdOut("Succcessfully created default SSH keys!")
-                    break
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_default_keys]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [install_default_keys]")
             return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_default_keys]")
-            return 0
-
-        return 1
 
     def install_rsync(self):
         try:
-            count = 0
-            while (1):
-
+            if self.distro == centos:
                 command = 'yum -y install rsync'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+            else:
+                command = 'apt-get -y install rsync'
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to install rsync, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install rsync, some of backup functions will not work. [install_rsync]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Succcessfully installed rsync!")
-                    preFlightsChecks.stdOut("Succcessfully installed rsync!")
-                    break
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_rsync]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [install_rsync]")
             return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [install_rsync]")
-            return 0
-
-        return 1
 
     def test_Requests(self):
         try:
             import requests
             getVersion = requests.get('https://cyberpanel.net/version.txt')
             latest = getVersion.json()
-        except BaseException,msg:
+        except BaseException, msg:
 
             command = "pip uninstall --yes urllib3"
-            subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             command = "pip uninstall --yes requests"
-            subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-            count = 0
-            while (1):
+            command = "pip install http://mirror.cyberpanel.net/urllib3-1.22.tar.gz"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-                command = "pip install http://mirror.cyberpanel.net/urllib3-1.22.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Unable to install urllib3 module, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to install urllib3 module, exiting installer! [install_python_requests]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("urllib3 module Successfully installed!")
-                    preFlightsChecks.stdOut("urllib3 module Successfully installed!")
-                    break
-
-            count = 0
-            while (1):
-
-                command = "pip install http://mirror.cyberpanel.net/requests-2.18.4.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Unable to install requests module, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Unable to install requests module, exiting installer! [install_python_requests]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("Requests module Successfully installed!")
-                    preFlightsChecks.stdOut("Requests module Successfully installed!")
-                    break
+            command = "pip install http://mirror.cyberpanel.net/requests-2.18.4.tar.gz"
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
     def installation_successfull(self):
         print("###################################################################")
@@ -2464,123 +1776,34 @@ class preFlightsChecks:
 
         print("###################################################################")
 
-    def installCertBot(self):
-        try:
-
-            command = "pip uninstall --yes pyOpenSSL"
-            res = subprocess.call(shlex.split(command))
-
-            command = "pip uninstall --yes certbot"
-            res = subprocess.call(shlex.split(command))
-
-            count = 0
-            while (1):
-                command = "pip install http://" + preFlightsChecks.cyberPanelMirror + "/pyOpenSSL-17.5.0.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to install pyOpenSSL, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to install pyOpenSSL, exiting installer! [installCertBot]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("pyOpenSSL successfully installed!  [pip]")
-                    preFlightsChecks.stdOut("pyOpenSSL successfully installed!  [pip]")
-                    break
-
-            count = 0
-            while (1):
-                command = "pip install http://" + preFlightsChecks.cyberPanelMirror + "/certbot-0.21.1.tar.gz"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to install CertBot, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to install CertBot, exiting installer! [installCertBot]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("CertBot successfully installed!  [pip]")
-                    preFlightsChecks.stdOut("CertBot successfully installed!  [pip]")
-                    break
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installCertBot]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installCertBot]")
-            return 0
-
-        return 1
-
     def modSecPreReqs(self):
         try:
 
-            pathToRemoveGarbageFile = os.path.join(self.server_root_path,"modules/mod_security.so")
+            pathToRemoveGarbageFile = os.path.join(self.server_root_path, "modules/mod_security.so")
             os.remove(pathToRemoveGarbageFile)
 
         except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [modSecPreReqs]")
-            return 0
-
-    def installTLDExtract(self):
-        try:
-            count = 0
-            while (1):
-                command = "pip install tldextract"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to install tldextract, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to install tldextract! [installTLDExtract]")
-                else:
-                    logging.InstallLog.writeToFile("tldextract successfully installed!  [pip]")
-                    preFlightsChecks.stdOut("tldextract successfully installed!  [pip]")
-                    break
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installTLDExtract]")
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [modSecPreReqs]")
             return 0
 
     def installOpenDKIM(self):
         try:
-            count = 0
-            while (1):
-
+            if self.distro == centos:
                 command = 'yum -y install opendkim'
-                cmd = shlex.split(command)
-                res = subprocess.call(cmd)
+            else:
+                command = 'apt-get -y install opendkim'
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut("Trying to install opendkim, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile("Unable to install opendkim, your mail may not end up in inbox. [installOpenDKIM]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Succcessfully installed opendkim!")
-                    preFlightsChecks.stdOut("Succcessfully installed opendkim!")
-                    break
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
+            if self.distro == ubuntu:
+                command = 'apt install opendkim-tools'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installOpenDKIM]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installOpenDKIM]")
+                command = 'mkdir -p /etc/opendkim/keys/'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [installOpenDKIM]")
             return 0
 
         return 1
@@ -2601,10 +1824,9 @@ ExternalIgnoreList	refile:/etc/opendkim/TrustedHosts
 InternalHosts	refile:/etc/opendkim/TrustedHosts
 """
 
-            writeToFile = open(openDKIMConfigurePath,'a')
+            writeToFile = open(openDKIMConfigurePath, 'a')
             writeToFile.write(configData)
             writeToFile.close()
-
 
             ## Configure postfix specific settings
 
@@ -2616,168 +1838,136 @@ non_smtpd_milters = $smtpd_milters
 milter_default_action = accept
 """
 
-            writeToFile = open(postfixFilePath,'a')
+            writeToFile = open(postfixFilePath, 'a')
             writeToFile.write(configData)
             writeToFile.close()
 
+            if self.distro == ubuntu:
+                data = open(openDKIMConfigurePath, 'r').readlines()
+                writeToFile = open(openDKIMConfigurePath, 'w')
+                for items in data:
+                    if items.find('Socket') > -1 and items.find('local:') and items[0] != '#':
+                        writeToFile.writelines('Socket  inet:8891@localhost\n')
+                    else:
+                        writeToFile.writelines(items)
+                writeToFile.close()
 
             #### Restarting Postfix and OpenDKIM
 
             command = "systemctl start opendkim"
-            subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             command = "systemctl enable opendkim"
-            subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             ##
 
             command = "systemctl start postfix"
-            subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
 
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [configureOpenDKIM]")
-            return 0
-        except ValueError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [configureOpenDKIM]")
+        except BaseException, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [configureOpenDKIM]")
             return 0
 
         return 1
 
-    def installdnsPython(self):
-        try:
-            count = 0
-            while (1):
-                command = "pip install dnspython"
-
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to install dnspython, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to install dnspython! [installdnsPython]")
-                else:
-                    logging.InstallLog.writeToFile("dnspython successfully installed!  [pip]")
-                    preFlightsChecks.stdOut("dnspython successfully installed!  [pip]")
-                    break
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [installdnsPython]")
-            return 0
-
     def setupCLI(self):
-        try:
-            count = 0
-            while (1):
-                command = "ln -s /usr/local/CyberCP/cli/cyberPanel.py /usr/bin/cyberpanel"
-                res = subprocess.call(shlex.split(command))
+        command = "ln -s /usr/local/CyberCP/cli/cyberPanel.py /usr/bin/cyberpanel"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to setup CLI, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to setup CLI! [setupCLI]")
-                else:
-                    logging.InstallLog.writeToFile("CLI setup successfull!")
-                    preFlightsChecks.stdOut("CLI setup successfull!")
-                    break
-
-            command = "chmod +x /usr/local/CyberCP/cli/cyberPanel.py"
-            res = subprocess.call(shlex.split(command))
-
-        except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setupCLI]")
-            return 0
+        command = "chmod +x /usr/local/CyberCP/cli/cyberPanel.py"
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
     def setupPHPAndComposer(self):
         try:
+
+            if self.distro == ubuntu:
+                if not os.access('/usr/local/lsws/lsphp70/bin/php', os.R_OK):
+                    if os.access('/usr/local/lsws/lsphp70/bin/php7.0', os.R_OK):
+                        os.symlink('/usr/local/lsws/lsphp70/bin/php7.0', '/usr/local/lsws/lsphp70/bin/php')
+                if not os.access('/usr/local/lsws/lsphp71/bin/php', os.R_OK):
+                    if os.access('/usr/local/lsws/lsphp71/bin/php7.1', os.R_OK):
+                        os.symlink('/usr/local/lsws/lsphp71/bin/php7.1', '/usr/local/lsws/lsphp71/bin/php')
+                if not os.access('/usr/local/lsws/lsphp72/bin/php', os.R_OK):
+                    if os.access('/usr/local/lsws/lsphp72/bin/php7.2', os.R_OK):
+                        os.symlink('/usr/local/lsws/lsphp72/bin/php7.2', '/usr/local/lsws/lsphp72/bin/php')
+
             command = "cp /usr/local/lsws/lsphp71/bin/php /usr/bin/"
-            res = subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             os.chdir(self.cwd)
 
             command = "chmod +x composer.sh"
-            res = subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
             command = "./composer.sh"
-            res = subprocess.call(shlex.split(command))
+            preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
         except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setupPHPAndComposer]")
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [setupPHPAndComposer]")
             return 0
 
     @staticmethod
-    def setupVirtualEnv():
+    def installOne(package):
+        res = subprocess.call(shlex.split('apt-get -y install ' + package))
+        if res != 0:
+            preFlightsChecks.stdOut("Error #" + str(res) + ' installing:' + package + '.  This may not be an issue ' \
+                                                                                      'but may affect installation of something later',
+                                    1)
+
+        return res  # Though probably not used
+
+    @staticmethod
+    def setupVirtualEnv(distro):
         try:
 
             ##
 
             count = 0
-            while (1):
+            if distro == ubuntu:
+                # You can't install all at once!  So install one at a time.
+                preFlightsChecks.stdOut("Installing python prerequisites", 1)
+                preFlightsChecks.installOne('libcurl4-gnutls-dev')
+                preFlightsChecks.installOne('libgnutls-dev')
+                preFlightsChecks.installOne('libgcrypt20-dev')
+                preFlightsChecks.installOne('libattr1')
+                preFlightsChecks.installOne('libattr1-dev')
+                preFlightsChecks.installOne('liblzma-dev')
+                preFlightsChecks.installOne('libgpgme-dev')
+                preFlightsChecks.installOne('libmariadbclient-dev')
+                preFlightsChecks.installOne('libcurl4-gnutls-dev')
+                preFlightsChecks.installOne('libssl-dev')
+                preFlightsChecks.installOne('nghttp2')
+                preFlightsChecks.installOne('libnghttp2-dev')
+                preFlightsChecks.installOne('idn2')
+                preFlightsChecks.installOne('libidn2-dev')
+                preFlightsChecks.installOne('libidn2-0-dev')
+                preFlightsChecks.installOne('librtmp-dev')
+                preFlightsChecks.installOne('libpsl-dev')
+                preFlightsChecks.installOne('nettle-dev')
+                preFlightsChecks.installOne('libgnutls28-dev')
+                preFlightsChecks.installOne('libldap2-dev')
+                preFlightsChecks.installOne('libgssapi-krb5-2')
+                preFlightsChecks.installOne('libk5crypto3')
+                preFlightsChecks.installOne('libkrb5-dev')
+                preFlightsChecks.installOne('libcomerr2')
+                preFlightsChecks.installOne('libldap2-dev')
+                preFlightsChecks.installOne('python-gpg')
+                preFlightsChecks.installOne('python-gpgme')
+            else:
                 command = "yum install -y libattr-devel xz-devel gpgme-devel mariadb-devel curl-devel"
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to install project dependant modules, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to install project dependant modules! [setupVirtualEnv]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("Project dependant modules installed successfully!")
-                    preFlightsChecks.stdOut("Project dependant modules installed successfully!!")
-                    break
+                preFlightsChecks.call(command, distro, command, command, 1, 1, os.EX_OSERR)
 
             ##
 
-
-            count = 0
-            while (1):
-                command = "pip install virtualenv"
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to install virtualenv, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed install virtualenv! [setupVirtualEnv]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("virtualenv installed successfully!")
-                    preFlightsChecks.stdOut("virtualenv installed successfully!")
-                    break
+            command = "pip install virtualenv"
+            preFlightsChecks.call(command, distro, command, command, 1, 1, os.EX_OSERR)
 
             ####
 
-            count = 0
-            while (1):
-                command = "virtualenv --system-site-packages /usr/local/CyberCP"
-                res = subprocess.call(shlex.split(command))
-
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to setup virtualenv, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to setup virtualenv! [setupVirtualEnv]")
-                        preFlightsChecks.stdOut("Installation failed, consult: /var/log/installLogs.txt")
-                        os._exit(0)
-                else:
-                    logging.InstallLog.writeToFile("virtualenv setuped successfully!")
-                    preFlightsChecks.stdOut("virtualenv setuped successfully!")
-                    break
+            command = "virtualenv --system-site-packages /usr/local/CyberCP"
+            preFlightsChecks.call(command, distro, command, command, 1, 1, os.EX_OSERR)
 
             ##
 
@@ -2788,52 +1978,257 @@ milter_default_action = accept
 
             ##
 
-            count = 0
-            while (1):
-                command = "pip install --ignore-installed -r /usr/local/CyberCP/requirments.txt"
-                res = subprocess.call(shlex.split(command))
+            install_file = '/usr/local/CyberCP/requirments.txt'
+            if distro == ubuntu and get_Ubuntu_release() < 18.04:
+                install_file_new = '/usr/local/CyberCP/requirements.txt'
+                fd = open(install_file, 'r')
+                fd_new = open(install_file_new, 'w')
+                lines = fd.readlines()
+                for line in lines:
+                    if line[:6] != 'pycurl' and line[:7] != 'pygpgme':
+                        fd_new.write(line)
+                fd.close()
+                fd_new.close()
+                preFlightsChecks.stdOut("Install updated " + install_file_new, 1)
+                install_file = install_file_new
 
-                if res == 1:
-                    count = count + 1
-                    preFlightsChecks.stdOut(
-                        "Trying to install project dependant modules, trying again, try number: " + str(count))
-                    if count == 3:
-                        logging.InstallLog.writeToFile(
-                            "Failed to install project dependant modules! [setupVirtualEnv]")
-                        break
-                else:
-                    logging.InstallLog.writeToFile("Project dependant modules installed successfully!")
-                    preFlightsChecks.stdOut("Project dependant modules installed successfully!!")
-                    break
-
-            command = "systemctl restart gunicorn.socket"
-            res = subprocess.call(shlex.split(command))
+            command = "pip install --ignore-installed -r " + install_file
+            preFlightsChecks.call(command, distro, command, command, 1, 1, os.EX_OSERR)
 
             command = "virtualenv --system-site-packages /usr/local/CyberCP"
-            res = subprocess.call(shlex.split(command))
-
-
+            preFlightsChecks.call(command, distro, command, command, 1, 0, os.EX_OSERR)
 
         except OSError, msg:
-            logging.InstallLog.writeToFile(str(msg) + " [setupVirtualEnv]")
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [setupVirtualEnv]")
             return 0
 
+    @staticmethod
+    def enableDisableDNS(state):
+        try:
+            servicePath = '/home/cyberpanel/powerdns'
+
+            if state == 'Off':
+
+                command = 'sudo systemctl stop pdns'
+                subprocess.call(shlex.split(command))
+
+                command = 'sudo systemctl disable pdns'
+                subprocess.call(shlex.split(command))
+
+                try:
+                    os.remove(servicePath)
+                except:
+                    pass
+
+            else:
+                writeToFile = open(servicePath, 'w+')
+                writeToFile.close()
+
+        except OSError, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [enableDisableDNS]")
+            return 0
+
+    @staticmethod
+    def enableDisableEmail(state):
+        try:
+            servicePath = '/home/cyberpanel/postfix'
+
+            if state == 'Off':
+
+                command = 'sudo systemctl stop postfix'
+                subprocess.call(shlex.split(command))
+
+                command = 'sudo systemctl disable postfix'
+                subprocess.call(shlex.split(command))
+
+                try:
+                    os.remove(servicePath)
+                except:
+                    pass
+
+            else:
+                writeToFile = open(servicePath, 'w+')
+                writeToFile.close()
+
+        except OSError, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [enableDisableEmail]")
+            return 0
+
+    @staticmethod
+    def enableDisableFTP(state, distro):
+        try:
+            servicePath = '/home/cyberpanel/pureftpd'
+
+            if state == 'Off':
+
+                command = 'sudo systemctl stop ' + preFlightsChecks.pureFTPDServiceName(distro)
+                subprocess.call(shlex.split(command))
+
+                command = 'sudo systemctl disable ' + preFlightsChecks.pureFTPDServiceName(distro)
+                subprocess.call(shlex.split(command))
+
+                try:
+                    os.remove(servicePath)
+                except:
+                    pass
+
+            else:
+                writeToFile = open(servicePath, 'w+')
+                writeToFile.close()
+
+        except OSError, msg:
+            logging.InstallLog.writeToFile('[ERROR] ' + str(msg) + " [enableDisableEmail]")
+            return 0
+
+    @staticmethod
+    def setUpFirstAccount():
+        try:
+            command = 'python /usr/local/CyberCP/plogical/adminPass.py --password 1234567'
+            subprocess.call(shlex.split(command))
+        except:
+            pass
+
+    @staticmethod
+    def p3(distro):
+        ### Virtual Env 3
+
+        if distro == centos:
+            command = 'yum -y install python36 -y'
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+            command = 'virtualenv -p python3 /usr/local/CyberPanel/p3'
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+            env_path = '/usr/local/CyberPanel/p3'
+            subprocess.call(['virtualenv', env_path])
+            activate_this = os.path.join(env_path, 'bin', 'activate_this.py')
+            execfile(activate_this, dict(__file__=activate_this))
+
+            command = "pip3 install --ignore-installed -r %s" % ('/usr/local/CyberCP/WebTerminal/requirments.txt')
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+        else:
+            command = 'apt install -y python3-pip'
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+            command = 'apt install build-essential libssl-dev libffi-dev python3-dev -y'
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+            command = 'apt install -y python3-venv'
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+            command = 'virtualenv -p python3 /usr/local/CyberPanel/p3'
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+            env_path = '/usr/local/CyberPanel/p3'
+            subprocess.call(['virtualenv', env_path])
+            activate_this = os.path.join(env_path, 'bin', 'activate_this.py')
+            execfile(activate_this, dict(__file__=activate_this))
+
+            command = "pip3 install --ignore-installed -r %s" % ('/usr/local/CyberCP/WebTerminal/requirments.txt')
+            preFlightsChecks.call(command, distro, '[install python36]',
+                                  'install python36',
+                                  1, 0, os.EX_OSERR)
+
+    def installRestic(self):
+        try:
+
+            CentOSPath = '/etc/redhat-release'
+
+            if os.path.exists(CentOSPath):
+
+                command = 'yum install yum-utils -y'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = 'yum-config-manager --add-repo https://copr.fedorainfracloud.org/coprs/copart/restic/repo/epel-7/copart-restic-epel-7.repo'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = 'yum install restic -y'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+            else:
+                command = 'apt-get update -y'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+                command = 'apt-get install restic -y'
+                preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
+
+            cronTab = '/etc/crontab'
+
+            data = open(cronTab, 'r').read()
+
+            if data.find('IncScheduler') == -1:
+                cronJob = '0 12 * * * root /usr/local/CyberCP/bin/python2 /usr/local/CyberCP/IncBackups/IncScheduler.py Daily\n'
+
+                writeToFile = open(cronTab, 'a')
+                writeToFile.writelines(cronJob)
+
+                cronJob = '0 0 * * 0 root /usr/local/CyberCP/bin/python2 /usr/local/CyberCP/IncBackups/IncScheduler.py Daily\n'
+                writeToFile.writelines(cronJob)
+                writeToFile.close()
+        except:
+            pass
+
+    def installAcme(self):
+        command = 'wget -O -  https://get.acme.sh | sh'
+        subprocess.call(command, shell=True)
+
+        command = '/root/.acme.sh/acme.sh --upgrade --auto-upgrade'
+        preFlightsChecks.call(command, self.distro, command, command, 1, 0, os.EX_OSERR)
 
 
 
 def main():
-
     parser = argparse.ArgumentParser(description='CyberPanel Installer')
     parser.add_argument('publicip', help='Please enter public IP for your VPS or dedicated server.')
     parser.add_argument('--mysql', help='Specify number of MySQL instances to be used.')
+    parser.add_argument('--postfix', help='Enable or disable Email Service.')
+    parser.add_argument('--powerdns', help='Enable or disable DNS Service.')
+    parser.add_argument('--ftp', help='Enable or disable ftp Service.')
+    parser.add_argument('--ent', help='Install LS Ent or OpenLiteSpeed')
+    parser.add_argument('--serial', help='Install LS Ent or OpenLiteSpeed')
+    parser.add_argument('--port', help='LSCPD Port')
     args = parser.parse_args()
 
     logging.InstallLog.writeToFile("Starting CyberPanel installation..")
     preFlightsChecks.stdOut("Starting CyberPanel installation..")
 
+    if args.ent == None:
+        ent = 0
+        preFlightsChecks.stdOut("OpenLiteSpeed web server will be installed.")
+    else:
+        if args.ent == 'ols':
+            ent = 0
+            preFlightsChecks.stdOut("OpenLiteSpeed web server will be installed.")
+        else:
+            preFlightsChecks.stdOut("LiteSpeed Enterprise web server will be installed.")
+            ent = 1
+            if args.serial != None:
+                serial = args.serial
+                preFlightsChecks.stdOut("LiteSpeed Enterprise Serial detected: " + serial)
+            else:
+                preFlightsChecks.stdOut("Installation failed, please specify LiteSpeed Enterprise key using --serial")
+                os._exit(0)
+
     ## Writing public IP
 
-    os.mkdir("/etc/cyberpanel")
+    try:
+        os.mkdir("/etc/cyberpanel")
+    except:
+        pass
 
     machineIP = open("/etc/cyberpanel/machineIP", "w")
     machineIP.writelines(args.publicip)
@@ -2841,74 +2236,115 @@ def main():
 
     cwd = os.getcwd()
 
-    checks = preFlightsChecks("/usr/local/lsws/",args.publicip,"/usr/local",cwd,"/usr/local/CyberCP")
+    distro = get_distro()
+    checks = preFlightsChecks("/usr/local/lsws/", args.publicip, "/usr/local", cwd, "/usr/local/CyberCP", distro)
+    checks.mountTemp()
 
-    try:
-        mysql = args.mysql
-    except:
+    if distro == ubuntu:
+        os.chdir("/etc/cyberpanel")
+
+    if args.port == None:
+        port = "8090"
+    else:
+        port = args.port
+
+    if args.mysql == None:
         mysql = 'One'
-
+        preFlightsChecks.stdOut("Single MySQL instance version will be installed.")
+    else:
+        mysql = args.mysql
+        preFlightsChecks.stdOut("Dobule MySQL instance version will be installed.")
 
     checks.checkPythonVersion()
     checks.setup_account_cyberpanel()
-    checks.yum_update()
+    if distro == centos:
+        checks.yum_update()
     checks.installCyberPanelRepo()
-    checks.enableEPELRepo()
+    if distro == centos:
+        checks.enableEPELRepo()
     checks.install_pip()
     checks.install_python_dev()
     checks.install_gcc()
-    checks.install_python_setup_tools()
-    checks.install_django()
-    checks.install_pexpect()
+    if distro == centos:
+        checks.install_python_setup_tools()
     checks.install_python_mysql_library()
-    checks.install_gunicorn()
-    checks.install_psutil()
-    checks.setup_gunicorn()
 
     import installCyberPanel
 
-    installCyberPanel.Main(cwd, mysql)
+    if ent == 0:
+        installCyberPanel.Main(cwd, mysql, distro, ent, None, port, args.ftp, args.powerdns)
+    else:
+        installCyberPanel.Main(cwd, mysql, distro, ent, serial, port, args.ftp, args.powerdns)
+
+    checks.setupPHPAndComposer()
     checks.fix_selinux_issue()
     checks.install_psmisc()
-    checks.install_postfix_davecot()
-    checks.setup_email_Passwords(installCyberPanel.InstallCyberPanel.mysqlPassword, mysql)
-    checks.setup_postfix_davecot_config(mysql)
 
+    if args.postfix == None:
+        checks.install_postfix_davecot()
+        checks.setup_email_Passwords(installCyberPanel.InstallCyberPanel.mysqlPassword, mysql)
+        checks.setup_postfix_davecot_config(mysql)
+    else:
+        if args.postfix == 'On':
+            checks.install_postfix_davecot()
+            checks.setup_email_Passwords(installCyberPanel.InstallCyberPanel.mysqlPassword, mysql)
+            checks.setup_postfix_davecot_config(mysql)
 
     checks.install_unzip()
     checks.install_zip()
     checks.install_rsync()
 
-    checks.downoad_and_install_raindloop()
-
-
-    checks.download_install_phpmyadmin()
-
     checks.installFirewalld()
 
-    checks.setupLSCPDDaemon()
-    checks.install_python_requests()
     checks.install_default_keys()
 
-    checks.installCertBot()
     checks.test_Requests()
     checks.download_install_CyberPanel(installCyberPanel.InstallCyberPanel.mysqlPassword, mysql)
+    checks.downoad_and_install_raindloop()
+    checks.download_install_phpmyadmin()
     checks.setupCLI()
     checks.setup_cron()
-    checks.installTLDExtract()
-    #checks.installdnsPython()
+    checks.installRestic()
+    checks.installAcme()
+    # checks.installdnsPython()
 
     ## Install and Configure OpenDKIM.
 
-    checks.installOpenDKIM()
-    checks.configureOpenDKIM()
+    if args.postfix == None:
+        checks.installOpenDKIM()
+        checks.configureOpenDKIM()
+    else:
+        if args.postfix == 'On':
+            checks.installOpenDKIM()
+            checks.configureOpenDKIM()
 
     checks.modSecPreReqs()
-    checks.setupVirtualEnv()
-    checks.setupPHPAndComposer()
-    checks.installation_successfull()
+    checks.installLSCPD()
+    checks.setupLSCPDDaemon()
+    checks.fixCyberPanelPermissions()
 
+    if args.postfix != None:
+        checks.enableDisableEmail(args.postfix)
+    else:
+        preFlightsChecks.stdOut("Postfix will be installed and enabled.")
+        checks.enableDisableEmail('On')
+
+    if args.powerdns != None:
+        checks.enableDisableDNS(args.powerdns)
+    else:
+        preFlightsChecks.stdOut("PowerDNS will be installed and enabled.")
+        checks.enableDisableDNS('On')
+
+    if args.ftp != None:
+        checks.enableDisableFTP(args.ftp, distro)
+    else:
+        preFlightsChecks.stdOut("Pure-FTPD will be installed and enabled.")
+        checks.enableDisableFTP('On', distro)
+
+    checks.setUpFirstAccount()
+    # checks.p3(distro)
     logging.InstallLog.writeToFile("CyberPanel installation successfully completed!")
+    #checks.installation_successfull()
 
 
 if __name__ == "__main__":

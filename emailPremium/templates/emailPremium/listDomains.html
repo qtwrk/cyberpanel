@@ -11,14 +11,14 @@
 <div class="container">
 
     <div id="page-title">
-       <h2 id="domainNamePage">{% trans "List Domains" %} - <a  target="_blank" href="http://go.cyberpanel.net/emailLimits" style="height: 23px;line-height: 21px;" class="btn btn-border btn-alt border-red btn-link font-red" title=""><span>{% trans "Emai Limits Docs" %}</span></a></h2>
+       <h2 id="domainNamePage">{% trans "List Domains" %} - <a  target="_blank" href="http://go.cyberpanel.net/emailLimits" style="height: 23px;line-height: 21px;" class="btn btn-border btn-alt border-red btn-link font-red" title=""><span>{% trans "Email Limits Docs" %}</span></a></h2>
        <p>{% trans "On this page you manage emails limits for Domains/Email Addresses" %}</p>
     </div>
 
 <div ng-controller="listDomains" class="panel">
     <div class="panel-body">
 
-    <h3 class="title-hero">
+    <h3 class="content-box-header">
             {% trans "Domains" %} <img ng-hide="emailLimitsLoading" src="{% static 'images/loading.gif' %}">
         </h3>
 
@@ -26,12 +26,14 @@
 
         <div class="row">
             <div class="col-md-12 text-center" style="margin-bottom: 2%;">
-                <h3>{% trans "Email Policy Server is not enabled " %}
+                <h4 class="mb-10">{% trans "Email Policy Server is not enabled " %}
+                </h4>
                     <a href="{% url 'emailPolicyServer' %}">
-                    <button class="btn btn-alt btn-hover btn-blue-alt">
-                        <span>{% trans "Enable Now." %}</span>
-                        <i class="glyph-icon icon-arrow-right"></i>
-                    </button></a></h3>
+                        <button class="btn btn-alt btn-hover btn-blue-alt">
+                            <span>{% trans "Enable Now." %}</span>
+                            <i class="glyph-icon icon-arrow-right"></i>
+                        </button>
+                    </a>
             </div>
         </div>
     {% else %}
